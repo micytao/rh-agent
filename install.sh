@@ -45,13 +45,23 @@ mkdir -p "$INSTALL_DIR"
 # Write wrapper script
 cat > "$WRAPPER" <<SCRIPT
 #!/bin/sh
-$RUNTIME rm -f rh-agent 2>/dev/null
-exec $RUNTIME run -it --rm \\
+IMAGE="$IMAGE"
+RUNTIME="$RUNTIME"
+
+if [ "\$1" = "update" ]; then
+  echo "Pulling latest \$IMAGE ..."
+  \$RUNTIME pull "\$IMAGE"
+  exit \$?
+fi
+
+\$RUNTIME rm -f rh-agent 2>/dev/null
+exec \$RUNTIME run -it --rm \\
   --name rh-agent \\
+  --pull=newer \\
   -v "\$HOME/.rh-agent:/home/node/.rh-agent" \\
   -v "\$(pwd)":/workspace \\
   -w /workspace \\
-  $IMAGE "\$@"
+  \$IMAGE "\$@"
 SCRIPT
 
 chmod +x "$WRAPPER"
@@ -75,4 +85,5 @@ info "  Get started:"
 dim  "    rh-agent              # interactive TUI"
 dim  "    rh-agent onboard      # setup wizard"
 dim  "    rh-agent \"query\"      # single query"
+dim  "    rh-agent update       # pull latest image"
 echo ""

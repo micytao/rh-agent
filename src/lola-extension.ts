@@ -323,7 +323,21 @@ const lolaExtension: ExtensionFactory = (pi) => {
 
           case "uninstall": {
             if (!param) {
-              ctx.ui.notify("Usage: /lola uninstall <module>", "warning");
+              const manifest = readManifest();
+              const entries = Object.entries(manifest).filter(([mod]) => mod !== "rh-basic");
+              if (entries.length === 0) {
+                ctx.ui.notify("No removable modules installed.\n\nrh-basic is a core module and cannot be uninstalled.", "info");
+                break;
+              }
+              const lines = entries.map(([mod, skills]) => `  ${mod} (${skills.length} skills)`);
+              ctx.ui.notify(
+                `Usage: /lola uninstall <module>\n\nInstalled modules:\n\n${lines.join("\n")}\n\nNote: rh-basic is a core module and cannot be uninstalled.`,
+                "info",
+              );
+              break;
+            }
+            if (param === "rh-basic") {
+              ctx.ui.notify("rh-basic is a core module and cannot be uninstalled.", "warning");
               break;
             }
             const removed = uninstallModule(param);
@@ -402,7 +416,7 @@ const lolaExtension: ExtensionFactory = (pi) => {
           .filter((s) => s.startsWith(prefix))
           .map((s) => ({ label: s, value: s }));
       }
-      if (parts[0] === "install" || parts[0] === "uninstall") {
+      if (parts[0] === "install") {
         const known = [
           "rh-basic", "rh-sre", "rh-developer", "ocp-admin",
           "rh-virt", "rh-ai-engineer", "rh-automation",
@@ -410,7 +424,15 @@ const lolaExtension: ExtensionFactory = (pi) => {
         const q = parts[1] || "";
         return known
           .filter((m) => m.startsWith(q))
-          .map((m) => ({ label: m, value: `${parts[0]} ${m}` }));
+          .map((m) => ({ label: m, value: `install ${m}` }));
+      }
+      if (parts[0] === "uninstall") {
+        const manifest = readManifest();
+        const removable = Object.keys(manifest).filter((m) => m !== "rh-basic");
+        const q = parts[1] || "";
+        return removable
+          .filter((m) => m.startsWith(q))
+          .map((m) => ({ label: m, value: `uninstall ${m}` }));
       }
       return null;
     },
