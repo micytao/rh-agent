@@ -1,19 +1,15 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, unlinkSync, cpSync, readdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 export const CONFIG_DIR = join(homedir(), ".rh-agent");
 export const CONFIG_FILE = join(CONFIG_DIR, "config.json");
 export const ENV_FILE = join(CONFIG_DIR, ".env");
-export const LOLA_SKILLS_DIR = join(CONFIG_DIR, "skills");
+export const AGENT_DIR = join(CONFIG_DIR, "agent");
+export const LOLA_SKILLS_DIR = join(AGENT_DIR, "skills");
 export const LOLA_MANIFEST = join(LOLA_SKILLS_DIR, ".lola-manifest.json");
+const OLD_SKILLS_DIR = join(CONFIG_DIR, "skills");
 
-export const RH_SSO_TOKEN_URL =
-  "https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/token";
-export const RH_SERVICE_ACCOUNT_PAGE =
-  "https://console.redhat.com/iam/service-accounts";
-export const RH_CLIENT_ID_ENV = "RH_CLIENT_ID";
-export const RH_CLIENT_SECRET_ENV = "RH_CLIENT_SECRET";
 
 export interface ProviderInfo {
   label: string;
@@ -45,7 +41,7 @@ export const PROVIDERS: Record<string, ProviderInfo> = {
   },
   google: {
     label: "Google (Gemini)",
-    envVar: "GOOGLE_API_KEY",
+    envVar: "GEMINI_API_KEY",
     piProvider: "google",
     models: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"],
     defaultModel: "gemini-2.5-flash",
@@ -71,10 +67,10 @@ export const PROVIDERS: Record<string, ProviderInfo> = {
 export interface RHAgentConfig {
   provider: string;
   model: string;
+  configured_providers: string[];
   mcp_enabled: boolean;
   api_key_source: string;
   base_url?: string;
-  rh_auth: boolean;
   extra?: Record<string, string>;
 }
 
@@ -82,9 +78,9 @@ export function defaultConfig(): RHAgentConfig {
   return {
     provider: "openai",
     model: "gpt-4o",
+    configured_providers: ["openai"],
     mcp_enabled: true,
     api_key_source: "env",
-    rh_auth: false,
   };
 }
 
@@ -99,9 +95,9 @@ export function saveConfig(cfg: RHAgentConfig): void {
   const data: Record<string, unknown> = {
     provider: cfg.provider,
     model: cfg.model,
+    configured_providers: cfg.configured_providers,
     mcp_enabled: cfg.mcp_enabled,
     api_key_source: cfg.api_key_source,
-    rh_auth: cfg.rh_auth,
   };
   if (cfg.base_url) data.base_url = cfg.base_url;
   if (cfg.extra && Object.keys(cfg.extra).length > 0) data.extra = cfg.extra;
@@ -115,10 +111,10 @@ export function loadConfig(): RHAgentConfig | null {
     return {
       provider: data.provider ?? "openai",
       model: data.model ?? "gpt-4o",
+      configured_providers: data.configured_providers ?? [data.provider ?? "openai"],
       mcp_enabled: data.mcp_enabled ?? true,
       api_key_source: data.api_key_source ?? "env",
-      base_url: data.base_url,
-      rh_auth: data.rh_auth ?? false,
+      base_url: data.base_url ? adaptBaseUrl(data.base_url) : undefined,
       extra: data.extra ?? {},
     };
   } catch {
@@ -173,48 +169,6 @@ export function resolveApiKey(
   return fileVals[prov.envVar] || undefined;
 }
 
-export function resolveRhServiceAccount(): [string | undefined, string | undefined] {
-  let clientId = process.env[RH_CLIENT_ID_ENV];
-  let clientSecret = process.env[RH_CLIENT_SECRET_ENV];
-
-  if (!clientId || !clientSecret) {
-    const fileVals = readEnvFile();
-    clientId = clientId || fileVals[RH_CLIENT_ID_ENV] || undefined;
-    clientSecret = clientSecret || fileVals[RH_CLIENT_SECRET_ENV] || undefined;
-  }
-
-  return [clientId || undefined, clientSecret || undefined];
-}
-
-export async function validateRhServiceAccount(
-  clientId: string,
-  clientSecret: string,
-): Promise<[boolean, string]> {
-  try {
-    const body = new URLSearchParams({
-      grant_type: "client_credentials",
-      scope: "api.console",
-      client_id: clientId,
-      client_secret: clientSecret,
-    });
-    const resp = await fetch(RH_SSO_TOKEN_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body,
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (resp.ok) return [true, "OK"];
-    const ct = resp.headers.get("content-type") ?? "";
-    if (ct.startsWith("application/json")) {
-      const json = (await resp.json()) as Record<string, string>;
-      return [false, json.error_description ?? `HTTP ${resp.status}`];
-    }
-    return [false, `HTTP ${resp.status}`];
-  } catch (err) {
-    return [true, `SKIP (network error: ${err})`];
-  }
-}
-
 export async function validateApiKey(
   providerId: string,
   apiKey: string,
@@ -247,17 +201,136 @@ export async function validateApiKey(
   }
 }
 
+export function isRunningInContainer(): boolean {
+  return existsSync("/.dockerenv") || existsSync("/run/.containerenv");
+}
+
+const CONTAINER_HOST = "host.containers.internal";
+
+/**
+ * Rewrite base URLs so a config written on the host works inside a container
+ * and vice versa. localhost ↔ host.containers.internal based on runtime.
+ */
+export function adaptBaseUrl(url: string): string {
+  if (isRunningInContainer()) {
+    return url.replace(/\/\/localhost([:\/])/g, `//${CONTAINER_HOST}$1`);
+  }
+  return url.replace(
+    new RegExp(`//${CONTAINER_HOST}([:\/])`, "g"),
+    `//localhost$1`,
+  );
+}
+
 export function loadEnvIntoProcess(): void {
   if (!existsSync(ENV_FILE)) return;
   const vars = readEnvFile();
-  for (const [key, val] of Object.entries(vars)) {
-    if (!(key in process.env)) process.env[key] = val;
+
+  // Migrate legacy GOOGLE_API_KEY -> GEMINI_API_KEY (Pi expects the latter)
+  if (vars.GOOGLE_API_KEY && !vars.GEMINI_API_KEY) {
+    vars.GEMINI_API_KEY = vars.GOOGLE_API_KEY;
+    delete vars.GOOGLE_API_KEY;
+    const lines = Object.entries(vars)
+      .filter(([, v]) => v != null)
+      .map(([k, v]) => `${k}=${v}`);
+    writeFileSync(ENV_FILE, lines.join("\n") + "\n");
+    chmodSync(ENV_FILE, 0o600);
   }
+
+  for (const [key, val] of Object.entries(vars)) {
+    if (!(key in process.env)) {
+      process.env[key] = key === "RH_AGENT_BASE_URL" ? adaptBaseUrl(val) : val;
+    }
+  }
+}
+
+export function hasAnyProviderKey(configuredProviders: string[]): boolean {
+  for (const id of configuredProviders) {
+    const prov = PROVIDERS[id];
+    if (!prov) continue;
+    if (process.env[prov.envVar]) return true;
+  }
+  return false;
+}
+
+/**
+ * One-time migration: move skills from ~/.rh-agent/skills/ to ~/.rh-agent/agent/skills/
+ * so Pi's native skill discovery finds them automatically.
+ */
+export function migrateSkillsDir(): void {
+  if (!existsSync(OLD_SKILLS_DIR)) return;
+  if (existsSync(LOLA_SKILLS_DIR) && readdirSync(LOLA_SKILLS_DIR).length > 0) return;
+
+  mkdirSync(LOLA_SKILLS_DIR, { recursive: true });
+  for (const entry of readdirSync(OLD_SKILLS_DIR)) {
+    const src = join(OLD_SKILLS_DIR, entry);
+    const dest = join(LOLA_SKILLS_DIR, entry);
+    cpSync(src, dest, { recursive: true });
+  }
+  rmSync(OLD_SKILLS_DIR, { recursive: true, force: true });
 }
 
 export function maskKey(key: string): string {
   if (key.length <= 8) return "****";
   return key.slice(0, 4) + "..." + key.slice(-4);
+}
+
+const MODELS_JSON_PATH = join(AGENT_DIR, "models.json");
+
+export function writeModelsJson(cfg: RHAgentConfig): void {
+  if (cfg.provider !== "custom" || !cfg.base_url) return;
+
+  mkdirSync(AGENT_DIR, { recursive: true });
+
+  const modelsJson = {
+    providers: {
+      "rh-agent-custom": {
+        name: "Custom Local Model",
+        baseUrl: adaptBaseUrl(cfg.base_url),
+        apiKey: "$RH_AGENT_API_KEY",
+        api: "openai-completions",
+        models: [
+          {
+            id: cfg.model,
+            name: cfg.model,
+            contextWindow: 131072,
+            maxTokens: 4096,
+          },
+        ],
+      },
+    },
+  };
+
+  writeFileSync(MODELS_JSON_PATH, JSON.stringify(modelsJson, null, 2) + "\n");
+}
+
+/**
+ * Re-read the existing models.json and rewrite baseUrl fields with adaptBaseUrl
+ * so a config written on the host works in a container and vice versa.
+ */
+export function refreshModelsJsonBaseUrl(): void {
+  if (!existsSync(MODELS_JSON_PATH)) return;
+  try {
+    const raw = JSON.parse(readFileSync(MODELS_JSON_PATH, "utf-8"));
+    let changed = false;
+    for (const prov of Object.values(raw.providers ?? {}) as Array<Record<string, unknown>>) {
+      if (typeof prov.baseUrl === "string") {
+        const adapted = adaptBaseUrl(prov.baseUrl);
+        if (adapted !== prov.baseUrl) {
+          prov.baseUrl = adapted;
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      writeFileSync(MODELS_JSON_PATH, JSON.stringify(raw, null, 2) + "\n");
+    }
+  } catch { /* non-critical */ }
+}
+
+export function removeModelsJson(): void {
+  try {
+    if (existsSync(MODELS_JSON_PATH)) unlinkSync(MODELS_JSON_PATH);
+  } catch { /* non-critical */ }
 }
 
 export const RH_SYSTEM_PROMPT = `\

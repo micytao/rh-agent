@@ -1,58 +1,62 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
-import { homedir } from "node:os";
-import { createRequire } from "node:module";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
+  CONFIG_DIR,
+  AGENT_DIR,
   PROVIDERS,
   RH_SYSTEM_PROMPT,
-  LOLA_SKILLS_DIR,
   LOLA_MANIFEST,
+  migrateSkillsDir,
   type RHAgentConfig,
 } from "./config.js";
 import rhAgentExtension from "./extension.js";
 import lolaExtension from "./lola-extension.js";
 
-const PI_SETTINGS_PATH = join(homedir(), ".pi", "agent", "settings.json");
+// ── Pi branding: must run BEFORE the first dynamic import() of the SDK ──
+// Pi reads piConfig from its own package.json at module load time to set
+// APP_NAME (exit message, export filenames) and CONFIG_DIR_NAME (paths).
+// We patch it here so the dynamic import picks up our values.
+mkdirSync(AGENT_DIR, { recursive: true });
+migrateSkillsDir();
 
-const APP_NAME = "rh-agent";
-
-function ensurePiBranding(): void {
-  try {
-    const require = createRequire(import.meta.url);
-    const piPkgPath = require.resolve("@earendil-works/pi-coding-agent/package.json");
-    const piPkg = JSON.parse(readFileSync(piPkgPath, "utf-8"));
-    if (piPkg.piConfig?.name === APP_NAME) return;
-    piPkg.piConfig = { ...piPkg.piConfig, name: APP_NAME };
+try {
+  // Can't use require.resolve() -- Pi's exports field doesn't expose package.json.
+  // Walk up from the dist entry to find the package root.
+  const piEntry = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
+  const piPkgPath = join(dirname(dirname(piEntry)), "package.json");
+  const piPkg = JSON.parse(readFileSync(piPkgPath, "utf-8"));
+  let dirty = false;
+  if (piPkg.piConfig?.name !== "rh-agent" || piPkg.piConfig?.configDir !== ".rh-agent") {
+    piPkg.piConfig = { ...piPkg.piConfig, name: "rh-agent", configDir: ".rh-agent" };
+    dirty = true;
+  }
+  // Set version very high so Pi's update checker never fires a notification
+  if (piPkg.version !== "99.0.0") {
+    piPkg.version = "99.0.0";
+    dirty = true;
+  }
+  if (dirty) {
     writeFileSync(piPkgPath, JSON.stringify(piPkg, null, 2) + "\n");
-  } catch {
-    // Non-critical
   }
-}
+} catch { /* non-critical */ }
 
-function ensureQuietStartup(): void {
-  try {
-    mkdirSync(join(homedir(), ".pi", "agent"), { recursive: true });
-    let settings: Record<string, unknown> = {};
-    if (existsSync(PI_SETTINGS_PATH)) {
-      settings = JSON.parse(readFileSync(PI_SETTINGS_PATH, "utf-8"));
-    }
-    if (settings.quietStartup !== true) {
-      settings.quietStartup = true;
-      writeFileSync(PI_SETTINGS_PATH, JSON.stringify(settings, null, 2) + "\n");
-    }
-  } catch {
-    // Non-critical
+// After patching, Pi's APP_NAME → "rh-agent" → ENV_AGENT_DIR → "RH-AGENT_CODING_AGENT_DIR"
+process.env["RH-AGENT_CODING_AGENT_DIR"] = AGENT_DIR;
+
+// Suppress Pi's default [Skills] / [Extensions] listing at startup.
+// rh-agent shows its own banner via rhAgentExtension instead.
+const SETTINGS_PATH = join(AGENT_DIR, "settings.json");
+try {
+  let settings: Record<string, unknown> = {};
+  if (existsSync(SETTINGS_PATH)) {
+    settings = JSON.parse(readFileSync(SETTINGS_PATH, "utf-8"));
   }
-}
-
-function collectSkillPaths(): string[] {
-  if (!existsSync(LOLA_SKILLS_DIR)) return [];
-  return readdirSync(LOLA_SKILLS_DIR)
-    .map((name) => join(LOLA_SKILLS_DIR, name))
-    .filter(
-      (p) => statSync(p).isDirectory() && existsSync(join(p, "SKILL.md")),
-    );
-}
+  if (settings.quietStartup !== true) {
+    settings.quietStartup = true;
+    writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2) + "\n");
+  }
+} catch { /* non-critical */ }
 
 export interface ModuleSummary {
   module: string;
@@ -78,20 +82,22 @@ export function collectModuleSummary(): { modules: ModuleSummary[]; total: numbe
 
 function buildPiArgs(
   cfg: RHAgentConfig,
-  opts: { modelOverride?: string; query?: string },
+  opts: { modelOverride?: string; query?: string; sessionId?: string },
 ): string[] {
   const prov = PROVIDERS[cfg.provider] ?? PROVIDERS.openai;
   const modelId = opts.modelOverride ?? cfg.model;
+  const piProvider = cfg.provider === "custom" ? "rh-agent-custom" : prov.piProvider;
+
   const args: string[] = [
-    "--provider", prov.piProvider,
+    "--provider", piProvider,
     "--model", modelId,
     "--system-prompt", RH_SYSTEM_PROMPT,
     "--no-extensions",
     "--no-prompt-templates",
   ];
 
-  for (const skillPath of collectSkillPaths()) {
-    args.push("--skill", skillPath);
+  if (opts.sessionId) {
+    args.push("--session", opts.sessionId);
   }
 
   if (opts.query) {
@@ -107,11 +113,10 @@ function buildPiArgs(
 export async function runInteractive(
   cfg: RHAgentConfig,
   modelOverride?: string,
+  sessionId?: string,
 ): Promise<void> {
-  ensureQuietStartup();
-  ensurePiBranding();
   const { main } = await import("@earendil-works/pi-coding-agent");
-  await main(buildPiArgs(cfg, { modelOverride }), {
+  await main(buildPiArgs(cfg, { modelOverride, sessionId }), {
     extensionFactories: [rhAgentExtension, lolaExtension],
   });
 }
@@ -124,8 +129,6 @@ export async function runQuery(
   query: string,
   modelOverride?: string,
 ): Promise<void> {
-  ensureQuietStartup();
-  ensurePiBranding();
   const { main } = await import("@earendil-works/pi-coding-agent");
   await main(buildPiArgs(cfg, { modelOverride, query }), {
     extensionFactories: [rhAgentExtension, lolaExtension],

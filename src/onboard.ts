@@ -4,18 +4,16 @@ import {
   CONFIG_DIR,
   PROVIDERS,
   LOLA_SKILLS_DIR,
-  RH_CLIENT_ID_ENV,
-  RH_CLIENT_SECRET_ENV,
-  RH_SERVICE_ACCOUNT_PAGE,
+  isRunningInContainer,
   type RHAgentConfig,
   loadConfig,
   saveConfig,
   saveEnvKey,
   resolveApiKey,
-  resolveRhServiceAccount,
-  validateRhServiceAccount,
   validateApiKey,
   maskKey,
+  writeModelsJson,
+  removeModelsJson,
 } from "./config.js";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -24,14 +22,14 @@ function detectEnvKey(providerId: string): string | undefined {
   return process.env[PROVIDERS[providerId].envVar] || undefined;
 }
 
-async function promptProvider(): Promise<string> {
-  return select({
-    message: "Choose your model provider:",
-    choices: Object.entries(PROVIDERS).map(([id, p]) => ({
-      name: p.label,
-      value: id,
-    })),
-  });
+async function promptProvider(
+  exclude: string[] = [],
+  label = "Choose your model provider:",
+): Promise<string> {
+  const choices = Object.entries(PROVIDERS)
+    .filter(([id]) => !exclude.includes(id))
+    .map(([id, p]) => ({ name: p.label, value: id }));
+  return select({ message: label, choices });
 }
 
 async function promptApiKey(providerId: string): Promise<string> {
@@ -56,6 +54,46 @@ async function promptApiKey(providerId: string): Promise<string> {
   }
 }
 
+function getBaseUrlPresets() {
+  const inContainer = isRunningInContainer();
+  const host = inContainer ? "host.containers.internal" : "localhost";
+  return [
+    { name: `Ollama       (http://${host}:11434/v1)`, value: `http://${host}:11434/v1` },
+    { name: `vLLM         (http://${host}:8000/v1)`,  value: `http://${host}:8000/v1` },
+    { name: `LM Studio    (http://${host}:1234/v1)`,  value: `http://${host}:1234/v1` },
+    { name: "Enter a custom URL",                      value: "__custom__" },
+  ];
+}
+
+async function promptBaseUrl(): Promise<string> {
+  if (isRunningInContainer()) {
+    console.log(
+      c.bold("\n  Tip:") + c.dim(" Running inside a container. Presets use") +
+        c.dim("\n  host.containers.internal to reach services on your host machine."),
+    );
+  }
+
+  const choice = await select({
+    message: "Select your local inference endpoint:",
+    choices: getBaseUrlPresets(),
+  });
+
+  if (choice !== "__custom__") return choice;
+
+  while (true) {
+    const url = (await input({ message: "Base URL:" })).trim();
+    if (url) return url;
+    console.log(c.red("  Base URL cannot be empty."));
+  }
+}
+
+async function promptCustomApiKey(): Promise<string> {
+  const key = (await input({
+    message: "API key (leave blank if not required):",
+  })).trim();
+  return key || "no-key";
+}
+
 async function promptExtraEnvVars(
   providerId: string,
 ): Promise<Record<string, string>> {
@@ -64,6 +102,7 @@ async function promptExtraEnvVars(
   for (const [varName, description] of Object.entries(
     prov.extraEnvVars ?? {},
   )) {
+    if (varName === "RH_AGENT_BASE_URL") continue;
     const existing = process.env[varName];
     if (existing) {
       console.log(
@@ -89,15 +128,44 @@ async function promptExtraEnvVars(
   return extras;
 }
 
-async function promptModel(providerId: string): Promise<string> {
-  const prov = PROVIDERS[providerId];
-  if (!prov.models.length) {
-    while (true) {
-      const model = await input({ message: "Enter model name:" });
-      if (model.trim()) return model.trim();
-      console.log(c.red("  Model name cannot be empty."));
+async function fetchLocalModels(baseUrl: string): Promise<string[]> {
+  try {
+    process.stdout.write("  Fetching models from server... ");
+    const res = await fetch(`${baseUrl}/models`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const body = (await res.json()) as { data?: Array<{ id: string }> };
+    const ids = (body.data ?? []).map((m) => m.id).filter(Boolean).sort();
+    if (ids.length) {
+      console.log(c.green(`${ids.length} found`));
+    } else {
+      console.log(c.yellow("none found"));
     }
+    return ids;
+  } catch (e) {
+    console.log(c.yellow("could not connect"));
+    return [];
   }
+}
+
+async function promptModel(providerId: string, baseUrl?: string): Promise<string> {
+  const prov = PROVIDERS[providerId];
+
+  if (providerId === "custom" && baseUrl) {
+    const models = await fetchLocalModels(baseUrl);
+    if (models.length) {
+      return select({
+        message: "Choose model:",
+        choices: [
+          ...models.map((m) => ({ name: m, value: m })),
+          { name: "Enter a different model name", value: "__manual__" },
+        ],
+      }).then((v) => v === "__manual__" ? promptManualModel() : v);
+    }
+    console.log(c.dim("  Make sure your server is running, or enter the model name manually."));
+    return promptManualModel();
+  }
+
+  if (!prov.models.length) return promptManualModel();
 
   return select({
     message: "Choose default model:",
@@ -109,109 +177,28 @@ async function promptModel(providerId: string): Promise<string> {
   });
 }
 
-async function promptRhAuth(): Promise<{
-  enabled: boolean;
-  clientId?: string;
-  clientSecret?: string;
-}> {
-  console.log(
-    c.bold("\n  Red Hat Service Account") +
-      "\n  The CVE Explainer skill can optionally use a Red Hat service" +
-      " account (Client ID + Client Secret) for enhanced data access." +
-      "\n  Without one, CVE lookups fall back to public data only.",
-  );
-
-  const choice = await select({
-    message: "Do you have a Red Hat service account?",
-    choices: [
-      {
-        name: "Yes -- configure Client ID and Client Secret now",
-        value: "configure" as const,
-      },
-      { name: "No -- show me how to create one", value: "create" as const },
-      { name: "Skip -- I'll set it up later", value: "skip" as const },
-    ],
-  });
-
-  if (choice === "skip") return { enabled: false };
-
-  if (choice === "create") {
-    console.log(
-      c.bold("\n  Create a service account at:") +
-        `\n    ${c.cyan(RH_SERVICE_ACCOUNT_PAGE)}` +
-        "\n" +
-        "\n  Steps:" +
-        `\n    1. Log in to ${c.cyan("console.redhat.com")}` +
-        "\n    2. Go to Settings (gear icon) > Service Accounts" +
-        `\n    3. Click ${c.bold("Create service account")}` +
-        `\n    4. Copy the ${c.bold("Client ID")} and ${c.bold("Client Secret")}` +
-        "\n    5. Add the service account to a User Access group with the required roles" +
-        "\n" +
-        `\n  ${c.dim("Then re-run")} ${c.boldCyan("rh-agent onboard")}${c.dim(" to configure authentication.")}`,
-    );
-    return { enabled: false };
-  }
-
-  const [existingId, existingSecret] = resolveRhServiceAccount();
-  if (existingId && existingSecret) {
-    console.log(
-      c.green("\n  Found existing credentials:") +
-        `\n    Client ID: ${existingId}` +
-        `\n    Client Secret: ${maskKey(existingSecret)}`,
-    );
-    const useExisting = await confirm({
-      message: "Use these credentials?",
-      default: true,
-    });
-    if (useExisting) {
-      return { enabled: true, clientId: existingId, clientSecret: existingSecret };
-    }
-  }
-
-  console.log(
-    c.bold("\n  Enter your Red Hat service account credentials.") +
-      `\n  ${c.dim(`Create one at: ${RH_SERVICE_ACCOUNT_PAGE}`)}`,
-  );
-
+async function promptManualModel(): Promise<string> {
   while (true) {
-    const clientId = (await input({ message: "Client ID:" })).trim();
-    if (!clientId) {
-      console.log(c.red("  Client ID cannot be empty."));
-      continue;
-    }
-
-    const clientSecret = (await password({ message: "Client Secret:" })).trim();
-    if (!clientSecret) {
-      console.log(c.red("  Client Secret cannot be empty."));
-      continue;
-    }
-
-    process.stdout.write("  Validating service account... ");
-    const [ok, msg] = await validateRhServiceAccount(clientId, clientSecret);
-    if (ok) {
-      console.log(c.boldGreen(msg));
-      return { enabled: true, clientId, clientSecret };
-    }
-    console.log(c.boldRed("FAILED") + ` (${msg})`);
-    const retry = await confirm({
-      message: "Validation failed. Try again?",
-      default: true,
-    });
-    if (!retry) return { enabled: false };
+    const model = await input({ message: "Enter model name:" });
+    if (model.trim()) return model.trim();
+    console.log(c.red("  Model name cannot be empty."));
   }
 }
 
 function showCurrentConfig(cfg: RHAgentConfig): void {
   const prov = PROVIDERS[cfg.provider];
   console.log("\n  Current Configuration:");
-  console.log(`    Provider:      ${prov?.label ?? cfg.provider}`);
-  console.log(`    Model:         ${cfg.model}`);
-  console.log(
-    `    Red Hat Auth:  ${cfg.rh_auth ? "Configured" : "Not configured"}`,
-  );
-  console.log(`    API Key Source: ${cfg.api_key_source}`);
-  if (cfg.base_url) console.log(`    Base URL:      ${cfg.base_url}`);
-  console.log(`    Config Dir:    ${CONFIG_DIR}`);
+  console.log(`    Default Provider: ${prov?.label ?? cfg.provider}`);
+  console.log(`    Default Model:    ${cfg.model}`);
+  if (cfg.configured_providers.length > 1) {
+    const names = cfg.configured_providers
+      .map((id) => PROVIDERS[id]?.label ?? id)
+      .join(", ");
+    console.log(`    All Providers:    ${names}`);
+  }
+  console.log(`    API Key Source:   ${cfg.api_key_source}`);
+  if (cfg.base_url) console.log(`    Base URL:         ${cfg.base_url}`);
+  console.log(`    Config Dir:       ${CONFIG_DIR}`);
 }
 
 function countSkills(): number {
@@ -239,6 +226,58 @@ function postInstallSummary(): void {
   );
 }
 
+interface ProviderSetup {
+  providerId: string;
+  apiKey: string;
+  model: string;
+  baseUrl?: string;
+  extras: Record<string, string>;
+}
+
+async function configureOneProvider(
+  providerId: string,
+): Promise<ProviderSetup | null> {
+  let apiKey: string;
+  let baseUrl: string | undefined;
+  const extras: Record<string, string> = {};
+
+  if (providerId === "custom") {
+    console.log(
+      c.bold("\n  Tip:") + c.dim(" rh-agent uses tool-calling and skill files that require a") +
+        c.dim("\n  capable model (≥12B parameters recommended). Smaller models") +
+        c.dim("\n  may fail to follow instructions or resolve file paths correctly.") +
+        c.dim("\n  Good choices: Gemma 4, Qwen 2.5 32B, Llama 3.3 70B, Mistral Large."),
+    );
+    baseUrl = await promptBaseUrl();
+    apiKey = await promptCustomApiKey();
+    extras.RH_AGENT_BASE_URL = baseUrl;
+  } else {
+    apiKey = await promptApiKey(providerId);
+    const provExtras = await promptExtraEnvVars(providerId);
+    Object.assign(extras, provExtras);
+    baseUrl = extras.RH_AGENT_BASE_URL;
+  }
+
+  const model = await promptModel(providerId, baseUrl);
+
+  if (providerId !== "custom") {
+    process.stdout.write("\n  Validating API key... ");
+    const valid = await validateApiKey(providerId, apiKey);
+    if (valid) {
+      console.log(c.boldGreen("OK"));
+    } else {
+      console.log(c.boldRed("FAILED"));
+      const saveAnyway = await confirm({
+        message: "API key validation failed. Save anyway?",
+        default: false,
+      });
+      if (!saveAnyway) return null;
+    }
+  }
+
+  return { providerId, apiKey, model, baseUrl, extras };
+}
+
 export async function runOnboard(opts: {
   nonInteractive?: boolean;
   authChoice?: string;
@@ -262,49 +301,84 @@ export async function runOnboard(opts: {
     return runNonInteractive(opts.authChoice);
   }
 
-  const providerId = await promptProvider();
-  const apiKey = await promptApiKey(providerId);
-  const extras = await promptExtraEnvVars(providerId);
-  const model = await promptModel(providerId);
-  const rhAuth = await promptRhAuth();
+  const setups: ProviderSetup[] = [];
 
-  process.stdout.write("\n  Validating API key... ");
-  const valid = await validateApiKey(providerId, apiKey);
-  if (valid) {
-    console.log(c.boldGreen("OK"));
-  } else {
-    console.log(c.boldRed("FAILED"));
-    const saveAnyway = await confirm({
-      message: "API key validation failed. Save anyway?",
+  // First provider (required)
+  const firstProviderId = await promptProvider([], "Choose your default model provider:");
+  const firstSetup = await configureOneProvider(firstProviderId);
+  if (!firstSetup) {
+    console.log(c.red("  Onboarding cancelled."));
+    return false;
+  }
+  setups.push(firstSetup);
+
+  // Additional providers (optional loop)
+  const allProviderIds = Object.keys(PROVIDERS);
+  while (setups.length < allProviderIds.length) {
+    console.log(
+      c.dim("\n  Tip: You can switch between providers at any time using ") +
+        c.cyan("/model") + c.dim(" in the TUI."),
+    );
+    const addMore = await confirm({
+      message: "Add another model provider?",
       default: false,
     });
-    if (!saveAnyway) {
-      console.log(c.red("  Onboarding cancelled."));
-      return false;
+    if (!addMore) break;
+
+    const configured = setups.map((s) => s.providerId);
+    const nextId = await promptProvider(configured, "Choose an additional provider:");
+    const nextSetup = await configureOneProvider(nextId);
+    if (nextSetup) setups.push(nextSetup);
+  }
+
+  // Save all provider keys
+  let hasCustom = false;
+  let customSetup: ProviderSetup | undefined;
+  for (const s of setups) {
+    const prov = PROVIDERS[s.providerId];
+    saveEnvKey(prov.envVar, s.apiKey);
+    for (const [k, v] of Object.entries(s.extras)) saveEnvKey(k, v);
+    if (s.providerId === "custom") {
+      hasCustom = true;
+      customSetup = s;
     }
   }
 
-  const prov = PROVIDERS[providerId];
-  saveEnvKey(prov.envVar, apiKey);
-  for (const [k, v] of Object.entries(extras)) saveEnvKey(k, v);
-  if (rhAuth.clientId && rhAuth.clientSecret) {
-    saveEnvKey(RH_CLIENT_ID_ENV, rhAuth.clientId);
-    saveEnvKey(RH_CLIENT_SECRET_ENV, rhAuth.clientSecret);
-  }
-
+  const primary = setups[0];
   const cfg: RHAgentConfig = {
-    provider: providerId,
-    model,
+    provider: primary.providerId,
+    model: primary.model,
+    configured_providers: setups.map((s) => s.providerId),
     mcp_enabled: true,
     api_key_source: "env",
-    base_url: extras.RH_AGENT_BASE_URL,
-    rh_auth: rhAuth.enabled,
+    base_url: primary.baseUrl,
     extra: Object.fromEntries(
-      Object.entries(extras).filter(([k]) => k !== "RH_AGENT_BASE_URL"),
+      Object.entries(primary.extras).filter(([k]) => k !== "RH_AGENT_BASE_URL"),
     ),
   };
   saveConfig(cfg);
+  if (hasCustom && customSetup) {
+    writeModelsJson({
+      ...cfg,
+      provider: "custom",
+      base_url: customSetup.baseUrl,
+      model: customSetup.model,
+    });
+  } else {
+    removeModelsJson();
+  }
+
   console.log(c.green(`\n  Config saved to ${CONFIG_DIR}/`));
+  if (setups.length > 1) {
+    console.log(
+      c.dim("  Configured providers: ") +
+        setups.map((s) => PROVIDERS[s.providerId].label).join(", "),
+    );
+    console.log(
+      c.dim("  Default: ") + PROVIDERS[primary.providerId].label +
+        c.dim("  (switch with /model in the TUI)"),
+    );
+  }
 
   postInstallSummary();
   return true;
@@ -347,23 +421,23 @@ async function runNonInteractive(authChoice?: string): Promise<boolean> {
   saveEnvKey(prov.envVar, apiKey);
   for (const [k, v] of Object.entries(extras)) saveEnvKey(k, v);
 
-  const rhClientId = process.env[RH_CLIENT_ID_ENV];
-  const rhClientSecret = process.env[RH_CLIENT_SECRET_ENV];
-  if (rhClientId) saveEnvKey(RH_CLIENT_ID_ENV, rhClientId);
-  if (rhClientSecret) saveEnvKey(RH_CLIENT_SECRET_ENV, rhClientSecret);
-
   const cfg: RHAgentConfig = {
     provider: providerId,
     model: prov.defaultModel ?? "gpt-4o",
+    configured_providers: [providerId],
     mcp_enabled: true,
     api_key_source: "env",
     base_url: extras.RH_AGENT_BASE_URL,
-    rh_auth: !!(rhClientId && rhClientSecret),
     extra: Object.fromEntries(
       Object.entries(extras).filter(([k]) => k !== "RH_AGENT_BASE_URL"),
     ),
   };
   saveConfig(cfg);
+  if (cfg.provider === "custom") {
+    writeModelsJson(cfg);
+  } else {
+    removeModelsJson();
+  }
   console.log(c.green(`  Config saved to ${CONFIG_DIR}/`));
   return true;
 }
@@ -380,34 +454,20 @@ export async function runStatus(): Promise<void> {
 
   showCurrentConfig(cfg);
 
-  const prov = PROVIDERS[cfg.provider];
-  const envVar = prov?.envVar ?? "";
-  const key = resolveApiKey(cfg.provider);
-
   console.log();
-  if (key) {
-    console.log(`  API Key (${envVar}): ${c.green(maskKey(key))}`);
-    process.stdout.write("  Validating API key... ");
-    const ok = await validateApiKey(cfg.provider, key);
-    console.log(ok ? c.boldGreen("OK") : c.boldRed("FAILED"));
-  } else {
-    console.log(`  API Key (${envVar}): ${c.red("NOT SET")}`);
-  }
-
-  const [rhId, rhSecret] = resolveRhServiceAccount();
-  if (rhId && rhSecret) {
-    console.log(
-      `  Red Hat Service Account: ${c.green("Configured")} (Client ID: ${rhId})`,
-    );
-    process.stdout.write("  Validating credentials... ");
-    const [ok, msg] = await validateRhServiceAccount(rhId, rhSecret);
-    console.log(ok ? c.green(msg) : c.red(msg));
-  } else {
-    console.log(
-      c.dim(
-        "  Red Hat Service Account: Not configured (run rh-agent onboard to set up)",
-      ),
-    );
+  for (const id of cfg.configured_providers) {
+    const prov = PROVIDERS[id];
+    if (!prov) continue;
+    const key = resolveApiKey(id);
+    const isDefault = id === cfg.provider;
+    const label = prov.label + (isDefault ? " (default)" : "");
+    if (key) {
+      process.stdout.write(`  ${label} (${prov.envVar}): ${c.green(maskKey(key))} -- `);
+      const ok = await validateApiKey(id, key);
+      console.log(ok ? c.boldGreen("OK") : c.boldRed("FAILED"));
+    } else {
+      console.log(`  ${label} (${prov.envVar}): ${c.red("NOT SET")}`);
+    }
   }
 
   const skillCount = countSkills();

@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env
+.git/
+*.tsbuildinfo
+.DS_Store
+pi-session-*.html

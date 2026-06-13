@@ -300,7 +300,13 @@ const lolaExtension: ExtensionFactory = (pi) => {
 
           case "install": {
             if (!param) {
-              ctx.ui.notify("Usage: /lola install <module>", "warning");
+              const modules = await fetchMarketplace();
+              const manifest = readManifest();
+              const body = formatModuleList(modules, manifest);
+              ctx.ui.notify(
+                `Usage: /lola install <module>\n\nAvailable modules:\n\n${body}`,
+                "info",
+              );
               break;
             }
             ctx.ui.notify(`Installing ${param}...`, "info");

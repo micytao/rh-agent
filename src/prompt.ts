@@ -18,30 +18,39 @@ export async function input(opts: { message: string }): Promise<string> {
 
 export async function password(opts: { message: string }): Promise<string> {
   return new Promise((resolve) => {
-    const rl = createInterface({
-      input: stdin,
-      output: stdout,
-      terminal: true,
-    });
-    // Mute output after the prompt is printed
     stdout.write(`${opts.message} `);
-    const origWrite = stdout.write.bind(stdout);
-    let muted = true;
-    stdout.write = ((chunk: any, ...args: any[]) => {
-      if (muted && typeof chunk === "string" && !chunk.includes("\n")) {
-        origWrite("*");
-        return true;
-      }
-      return origWrite(chunk, ...args);
-    }) as typeof stdout.write;
 
-    rl.question("").then((answer) => {
-      muted = false;
-      stdout.write = origWrite;
-      stdout.write("\n");
-      rl.close();
-      resolve(answer);
-    });
+    let buf = "";
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.setEncoding("utf-8");
+
+    const onData = (chunk: string) => {
+      for (const ch of chunk) {
+        if (ch === "\r" || ch === "\n") {
+          stdin.removeListener("data", onData);
+          stdin.setRawMode(false);
+          stdin.pause();
+          stdout.write("\n");
+          resolve(buf);
+          return;
+        } else if (ch === "\x7f" || ch === "\b") {
+          if (buf.length > 0) {
+            buf = buf.slice(0, -1);
+            stdout.write("\b \b");
+          }
+        } else if (ch === "\x03") {
+          stdin.removeListener("data", onData);
+          stdin.setRawMode(false);
+          process.exit(1);
+        } else if (ch >= " ") {
+          buf += ch;
+          stdout.write("*");
+        }
+      }
+    };
+
+    stdin.on("data", onData);
   });
 }
 
