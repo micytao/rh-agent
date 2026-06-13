@@ -45,7 +45,9 @@ mkdir -p "$INSTALL_DIR"
 # Write wrapper script
 cat > "$WRAPPER" <<SCRIPT
 #!/bin/sh
+$RUNTIME rm -f rh-agent 2>/dev/null
 exec $RUNTIME run -it --rm \\
+  --name rh-agent \\
   -v "\$HOME/.rh-agent:/home/node/.rh-agent" \\
   -v "\$(pwd)":/workspace \\
   -w /workspace \\
