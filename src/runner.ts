@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 import {
   CONFIG_DIR,
   AGENT_DIR,
@@ -12,6 +13,8 @@ import {
 } from "./config.js";
 import rhAgentExtension from "./extension.js";
 import lolaExtension from "./lola-extension.js";
+
+const MCP_JSON_PATH = join(AGENT_DIR, "mcp.json");
 
 // ── Pi branding: must run BEFORE the first dynamic import() of the SDK ──
 // Pi reads piConfig from its own package.json at module load time to set
@@ -67,6 +70,8 @@ try {
 
 // After patching, Pi's APP_NAME → "rh-agent" → ENV_AGENT_DIR → "RH-AGENT_CODING_AGENT_DIR"
 process.env["RH-AGENT_CODING_AGENT_DIR"] = AGENT_DIR;
+// pi-mcp-adapter reads PI_CODING_AGENT_DIR for token/cache storage
+process.env["PI_CODING_AGENT_DIR"] = AGENT_DIR;
 
 // Suppress Pi's default [Skills] / [Extensions] listing at startup.
 // rh-agent shows its own banner via rhAgentExtension instead.
@@ -81,6 +86,27 @@ try {
     writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2) + "\n");
   }
 } catch { /* non-critical */ }
+
+// Seed default mcp.json with Red Hat Security MCP if it doesn't exist yet.
+if (!existsSync(MCP_JSON_PATH)) {
+  try {
+    writeFileSync(
+      MCP_JSON_PATH,
+      JSON.stringify(
+        {
+          mcpServers: {
+            "red-hat-security": {
+              type: "http",
+              url: "https://security-mcp.api.redhat.com/mcp",
+            },
+          },
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+  } catch { /* non-critical */ }
+}
 
 export interface ModuleSummary {
   module: string;
@@ -104,6 +130,15 @@ export function collectModuleSummary(): { modules: ModuleSummary[]; total: numbe
   }
 }
 
+function resolveMcpAdapterPath(): string | null {
+  try {
+    const req = createRequire(import.meta.url);
+    return req.resolve("pi-mcp-adapter/index.ts");
+  } catch {
+    return null;
+  }
+}
+
 function buildPiArgs(
   cfg: RHAgentConfig,
   opts: { modelOverride?: string; query?: string; sessionId?: string },
@@ -119,6 +154,13 @@ function buildPiArgs(
     "--no-extensions",
     "--no-prompt-templates",
   ];
+
+  if (cfg.mcp_enabled) {
+    const adapterPath = resolveMcpAdapterPath();
+    if (adapterPath) {
+      args.push("-e", adapterPath);
+    }
+  }
 
   if (opts.sessionId) {
     args.push("--session", opts.sessionId);

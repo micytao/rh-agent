@@ -11,6 +11,7 @@ import {
   hasAnyProviderKey,
   defaultConfig,
   refreshModelsJsonBaseUrl,
+  refreshMcpJsonBaseUrls,
 } from "./config.js";
 
 const { values, positionals } = parseArgs({
@@ -96,8 +97,9 @@ async function runAgent(query?: string): Promise<void> {
     if (prov?.envVar) process.env[prov.envVar] = values["api-key"];
   }
 
-  // Adapt models.json base URLs for the current runtime (localhost ↔ host.containers.internal)
+  // Adapt base URLs for the current runtime (localhost ↔ host.containers.internal)
   refreshModelsJsonBaseUrl();
+  refreshMcpJsonBaseUrls();
 
   if (!hasAnyProviderKey(cfg.configured_providers)) {
     console.log(

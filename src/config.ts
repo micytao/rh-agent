@@ -327,6 +327,32 @@ export function refreshModelsJsonBaseUrl(): void {
   } catch { /* non-critical */ }
 }
 
+const MCP_JSON_PATH = join(AGENT_DIR, "mcp.json");
+
+/**
+ * Re-read mcp.json and rewrite server URL fields with adaptBaseUrl
+ * so localhost ↔ host.containers.internal based on runtime context.
+ */
+export function refreshMcpJsonBaseUrls(): void {
+  if (!existsSync(MCP_JSON_PATH)) return;
+  try {
+    const raw = JSON.parse(readFileSync(MCP_JSON_PATH, "utf-8"));
+    let changed = false;
+    for (const server of Object.values(raw.mcpServers ?? {}) as Array<Record<string, unknown>>) {
+      if (typeof server.url === "string") {
+        const adapted = adaptBaseUrl(server.url);
+        if (adapted !== server.url) {
+          server.url = adapted;
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      writeFileSync(MCP_JSON_PATH, JSON.stringify(raw, null, 2) + "\n");
+    }
+  } catch { /* non-critical */ }
+}
+
 export function removeModelsJson(): void {
   try {
     if (existsSync(MODELS_JSON_PATH)) unlinkSync(MODELS_JSON_PATH);
