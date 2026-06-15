@@ -23,50 +23,46 @@ const MCP_JSON_PATH = join(AGENT_DIR, "mcp.json");
 mkdirSync(AGENT_DIR, { recursive: true });
 migrateSkillsDir();
 
+// Patch Pi's branding and built-in /model command.
+// In containers, this is done at image build time (node_modules is read-only
+// under rootless podman). The runtime patching here covers dev/npm installs.
 try {
-  // Can't use require.resolve() -- Pi's exports field doesn't expose package.json.
-  // Walk up from the dist entry to find the package root.
   const piEntry = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
   const piDistRoot = dirname(dirname(piEntry));
   const piPkgPath = join(piDistRoot, "package.json");
   const piPkg = JSON.parse(readFileSync(piPkgPath, "utf-8"));
-  let dirty = false;
-  if (piPkg.piConfig?.name !== "rh-agent" || piPkg.piConfig?.configDir !== ".rh-agent") {
+
+  const alreadyPatched = piPkg.version === "99.0.0"
+    && piPkg.piConfig?.name === "rh-agent"
+    && piPkg.piConfig?.configDir === ".rh-agent";
+
+  if (!alreadyPatched) {
     piPkg.piConfig = { ...piPkg.piConfig, name: "rh-agent", configDir: ".rh-agent" };
-    dirty = true;
-  }
-  // Set version very high so Pi's update checker never fires a notification
-  if (piPkg.version !== "99.0.0") {
     piPkg.version = "99.0.0";
-    dirty = true;
-  }
-  if (dirty) {
     writeFileSync(piPkgPath, JSON.stringify(piPkg, null, 2) + "\n");
-  }
 
-  // Remove Pi's built-in /model interception so our extension command takes over.
-  // Also remove "model" from BUILTIN_SLASH_COMMANDS to avoid conflict diagnostics.
-  const interactivePath = join(piDistRoot, "dist", "modes", "interactive", "interactive-mode.js");
-  const slashCmdsPath = join(piDistRoot, "dist", "core", "slash-commands.js");
+    const interactivePath = join(piDistRoot, "dist", "modes", "interactive", "interactive-mode.js");
+    const slashCmdsPath = join(piDistRoot, "dist", "core", "slash-commands.js");
 
-  if (existsSync(interactivePath)) {
-    let src = readFileSync(interactivePath, "utf-8");
-    const modelBlock = /if\s*\(text\s*===\s*"\/model"\s*\|\|\s*text\.startsWith\("\/model "\)\)\s*\{[^}]*\}/;
-    if (modelBlock.test(src)) {
-      src = src.replace(modelBlock, "/* rh-agent: /model handled by extension */");
-      writeFileSync(interactivePath, src);
+    if (existsSync(interactivePath)) {
+      let src = readFileSync(interactivePath, "utf-8");
+      const modelBlock = /if\s*\(text\s*===\s*"\/model"\s*\|\|\s*text\.startsWith\("\/model "\)\)\s*\{[^}]*\}/;
+      if (modelBlock.test(src)) {
+        src = src.replace(modelBlock, "/* rh-agent: /model handled by extension */");
+        writeFileSync(interactivePath, src);
+      }
+    }
+
+    if (existsSync(slashCmdsPath)) {
+      let src = readFileSync(slashCmdsPath, "utf-8");
+      const modelEntry = /\{\s*name:\s*"model"[^}]*\},?\s*/;
+      if (modelEntry.test(src)) {
+        src = src.replace(modelEntry, "");
+        writeFileSync(slashCmdsPath, src);
+      }
     }
   }
-
-  if (existsSync(slashCmdsPath)) {
-    let src = readFileSync(slashCmdsPath, "utf-8");
-    const modelEntry = /\{\s*name:\s*"model"[^}]*\},?\s*/;
-    if (modelEntry.test(src)) {
-      src = src.replace(modelEntry, "");
-      writeFileSync(slashCmdsPath, src);
-    }
-  }
-} catch { /* non-critical */ }
+} catch { /* non-critical -- in containers, patching is done at build time */ }
 
 // After patching, Pi's APP_NAME → "rh-agent" → ENV_AGENT_DIR → "RH-AGENT_CODING_AGENT_DIR"
 process.env["RH-AGENT_CODING_AGENT_DIR"] = AGENT_DIR;

@@ -16,7 +16,7 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "latest",
+    "@earendil-works/pi-coding-agent": "0.79.1",
     "pi-mcp-adapter": "^2.10.0"
   },
   "devDependencies": {
