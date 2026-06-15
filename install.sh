@@ -223,7 +223,7 @@ if [ -e /dev/tty ]; then
         if [ "$PATH_ADDED" = "false" ]; then
           export PATH="$INSTALL_DIR:$PATH"
         fi
-        exec "$WRAPPER"
+        exec "$WRAPPER" </dev/tty
         ;;
     esac
   else
@@ -237,7 +237,7 @@ if [ -e /dev/tty ]; then
         if [ "$PATH_ADDED" = "false" ]; then
           export PATH="$INSTALL_DIR:$PATH"
         fi
-        exec "$WRAPPER"
+        exec "$WRAPPER" </dev/tty
         ;;
     esac
   fi
