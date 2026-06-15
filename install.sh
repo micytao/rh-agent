@@ -27,7 +27,7 @@ printf "${RH_RED}     / __ \\___ _____/ /  / / / /___ _/ /_   /   | ____ ____  _
 printf "${RH_RED}    / /_/ / _ \/ __  /  / /_/ / __ \`/ __/  / /| |/ __ \`/ _ \\/ __ \\/ __/${RESET}\n"
 printf "${RH_RED}   / _, _/  __/ /_/ /  / __  / /_/ / /_   / ___ / /_/ /  __/ / / / /_  ${RESET}\n"
 printf "${RH_RED}  /_/ |_|\\___/\\__,_/  /_/ /_/\\__,_/\\__/  /_/  |_\\__, /\\___/_/ /_/\\__/  ${RESET}\n"
-printf "${RH_RED}                                                /____/                  ${RESET}\n"
+printf "${RH_RED}                                                /___/                  ${RESET}\n"
 printf "${DIM}  Your AI-powered Red Hat assistant${RESET}\n"
 echo ""
 
@@ -151,9 +151,11 @@ if [ "\$RUNTIME" = "podman" ]; then
   EXTRA_FLAGS="--userns=keep-id --security-opt label=disable"
 fi
 
+printf "\\033[2m  Starting rh-agent...\\033[0m\\r"
+
 exec \$RUNTIME run -it --rm \\
   --name rh-agent \\
-  --pull=newer \\
+  --pull=never \\
   \$EXTRA_FLAGS \\
   -v "\$HOME/.rh-agent:/home/node/.rh-agent" \\
   -v "\$(pwd)":/workspace \\

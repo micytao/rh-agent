@@ -40,7 +40,7 @@ RUN node -e " \
 # ── Stage 2: runtime ─────────────────────────────────────────────────
 FROM node:22-alpine
 
-RUN apk add --no-cache git curl
+RUN apk add --no-cache git curl fd ripgrep
 
 WORKDIR /app
 
