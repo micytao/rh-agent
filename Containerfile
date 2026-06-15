@@ -54,9 +54,10 @@ COPY --from=build /tmp/skills/ /tmp/default-skills/
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
+# Ensure /home/node is writable by any UID (rootless podman UID mapping)
+RUN chmod 775 /home/node && chgrp 0 /home/node
+
 ENV NODE_ENV=production
 ENV HOME=/home/node
-
-USER node
 
 ENTRYPOINT ["docker-entrypoint.sh"]

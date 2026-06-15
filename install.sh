@@ -146,15 +146,15 @@ fi
 mkdir -p "\$HOME/.rh-agent"
 \$RUNTIME rm -f rh-agent 2>/dev/null
 
-USERNS_FLAG=""
+EXTRA_FLAGS=""
 if [ "\$RUNTIME" = "podman" ]; then
-  USERNS_FLAG="--userns=keep-id"
+  EXTRA_FLAGS="--userns=keep-id --security-opt label=disable"
 fi
 
 exec \$RUNTIME run -it --rm \\
   --name rh-agent \\
   --pull=newer \\
-  \$USERNS_FLAG \\
+  \$EXTRA_FLAGS \\
   -v "\$HOME/.rh-agent:/home/node/.rh-agent" \\
   -v "\$(pwd)":/workspace \\
   -w /workspace \\
