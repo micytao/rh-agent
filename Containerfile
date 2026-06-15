@@ -50,8 +50,8 @@ COPY --from=build /app/package.json package.json
 
 # Patch Pi at build time (runtime patching fails because node_modules is
 # not writable under rootless podman --userns=keep-id).
-COPY scripts/patch-pi.cjs /tmp/patch-pi.cjs
-RUN node /tmp/patch-pi.cjs && rm /tmp/patch-pi.cjs
+COPY scripts/patch-pi.cjs scripts/patch-pi.cjs
+RUN node scripts/patch-pi.cjs && rm -rf scripts
 
 # Stage default skills in /tmp so they survive volume mounts over ~/.rh-agent
 COPY --from=build /tmp/skills/ /tmp/default-skills/
