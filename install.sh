@@ -23,11 +23,11 @@ error() { printf "${RED}  ✗ %s${RESET}\n" "$*" >&2; }
 # ── Welcome banner ──
 echo ""
 printf "${RH_RED}      ____           __   __  __      __     ___                    __ ${RESET}\n"
-printf "${RH_RED}     / __ \\___ _____/ /  / / / /___ _/ /_   /   | ____  ____  ____  / /_${RESET}\n"
-printf "${RH_RED}    / /_/ / _ \/ __  /  / /_/ / __ \`/ __/  / /| |/ __ \`/ _ \\/ __ \\/ __/${RESET}\n"
+printf "${RH_RED}     / __ \\___  ____/ /  / / / /___ _/ /_   /   | ____  ___  ____  / /_${RESET}\n"
+printf "${RH_RED}    / /_/ / _ \\/ __  /  / /_/ / __ \`/ __/  / /| |/ __ \`/ _ \\/ __ \\/ __/${RESET}\n"
 printf "${RH_RED}   / _, _/  __/ /_/ /  / __  / /_/ / /_   / ___ / /_/ /  __/ / / / /_  ${RESET}\n"
 printf "${RH_RED}  /_/ |_|\\___/\\__,_/  /_/ /_/\\__,_/\\__/  /_/  |_\\__, /\\___/_/ /_/\\__/  ${RESET}\n"
-printf "${RH_RED}                                                /___/                  ${RESET}\n"
+printf "${RH_RED}                                               /____/                  ${RESET}\n"
 printf "${DIM}  Your AI-powered Red Hat assistant${RESET}\n"
 echo ""
 
