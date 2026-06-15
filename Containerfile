@@ -48,13 +48,15 @@ COPY --from=build /app/dist/ dist/
 COPY --from=build /app/node_modules/ node_modules/
 COPY --from=build /app/package.json package.json
 
-# Pre-installed skills (copied into the default agent skills dir)
-COPY --from=build /tmp/skills/ /home/node/.rh-agent/agent/skills/
+# Stage default skills in /tmp so they survive volume mounts over ~/.rh-agent
+COPY --from=build /tmp/skills/ /tmp/default-skills/
 
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 ENV NODE_ENV=production
 ENV HOME=/home/node
+
+USER node
 
 ENTRYPOINT ["docker-entrypoint.sh"]

@@ -143,10 +143,18 @@ if [ "\$1" = "uninstall" ]; then
   exit 0
 fi
 
+mkdir -p "\$HOME/.rh-agent"
 \$RUNTIME rm -f rh-agent 2>/dev/null
+
+USERNS_FLAG=""
+if [ "\$RUNTIME" = "podman" ]; then
+  USERNS_FLAG="--userns=keep-id"
+fi
+
 exec \$RUNTIME run -it --rm \\
   --name rh-agent \\
   --pull=newer \\
+  \$USERNS_FLAG \\
   -v "\$HOME/.rh-agent:/home/node/.rh-agent" \\
   -v "\$(pwd)":/workspace \\
   -w /workspace \\
