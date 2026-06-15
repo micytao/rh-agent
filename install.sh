@@ -82,7 +82,7 @@ if [ -n "$EXISTING_RH" ] && [ "$EXISTING_RH" != "$WRAPPER" ]; then
   echo ""
 fi
 
-if [ -t 0 ] && [ -t 1 ]; then
+if [ -e /dev/tty ]; then
   printf "  ${CYAN}Continue? [Y/n]${RESET} "
   read -r REPLY </dev/tty
   case "$REPLY" in
@@ -209,7 +209,7 @@ if [ ! -f "$HOME/.rh-agent/config.json" ]; then
   FIRST_TIME=true
 fi
 
-if [ -t 0 ] && [ -t 1 ]; then
+if [ -e /dev/tty ]; then
   if [ "$FIRST_TIME" = "true" ]; then
     printf "${BOLD}  Ready to set up rh-agent? This takes about 1 minute.${RESET}\n"
     printf "  You'll choose an LLM provider and enter an API key.\n"
