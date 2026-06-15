@@ -144,7 +144,6 @@ if [ "\$1" = "uninstall" ]; then
 fi
 
 mkdir -p "\$HOME/.rh-agent"
-\$RUNTIME rm -f rh-agent 2>/dev/null
 
 EXTRA_FLAGS=""
 if [ "\$RUNTIME" = "podman" ]; then
@@ -153,6 +152,7 @@ fi
 
 printf "\\033[2m  Starting rh-agent...\\033[0m\\r"
 
+\$RUNTIME rm -f rh-agent >/dev/null 2>&1
 exec \$RUNTIME run -it --rm \\
   --name rh-agent \\
   --pull=never \\
