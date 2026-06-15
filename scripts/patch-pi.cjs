@@ -6,7 +6,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const piRoot = path.join(__dirname, "node_modules", "@earendil-works", "pi-coding-agent");
+const piRoot = path.join(__dirname, "..", "node_modules", "@earendil-works", "pi-coding-agent");
 
 // 1. Patch package.json: version + branding
 const pkgPath = path.join(piRoot, "package.json");
