@@ -50,34 +50,8 @@ COPY --from=build /app/package.json package.json
 
 # Patch Pi at build time (runtime patching fails because node_modules is
 # not writable under rootless podman --userns=keep-id).
-# 1. Set version to 99.0.0 to suppress the "update available" notice
-# 2. Rebrand to rh-agent
-# 3. Remove built-in /model command so our extension's /model takes over
-RUN node -e " \
-  const fs = require('fs'); \
-  const path = require('path'); \
-  const piRoot = path.dirname(path.dirname(require.resolve('@earendil-works/pi-coding-agent'))); \
-  const pkgPath = path.join(piRoot, 'package.json'); \
-  const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8')); \
-  pkg.version = '99.0.0'; \
-  pkg.piConfig = { ...pkg.piConfig, name: 'rh-agent', configDir: '.rh-agent' }; \
-  fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n'); \
-  const imPath = path.join(piRoot, 'dist', 'modes', 'interactive', 'interactive-mode.js'); \
-  if (fs.existsSync(imPath)) { \
-    let src = fs.readFileSync(imPath, 'utf-8'); \
-    src = src.replace( \
-      /if\\s*\\(text\\s*===\\s*[\"']\\\/model[\"']\\s*\\|\\|\\s*text\\.startsWith\\([\"']\\\/model [\"']\\)\\)\\s*\\{[^}]*\\}/, \
-      '/* rh-agent: /model handled by extension */' \
-    ); \
-    fs.writeFileSync(imPath, src); \
-  } \
-  const scPath = path.join(piRoot, 'dist', 'core', 'slash-commands.js'); \
-  if (fs.existsSync(scPath)) { \
-    let src = fs.readFileSync(scPath, 'utf-8'); \
-    src = src.replace(/\\{\\s*name:\\s*[\"']model[\"'][^}]*\\},?\\s*/, ''); \
-    fs.writeFileSync(scPath, src); \
-  } \
-"
+COPY scripts/patch-pi.cjs /tmp/patch-pi.cjs
+RUN node /tmp/patch-pi.cjs && rm /tmp/patch-pi.cjs
 
 # Stage default skills in /tmp so they survive volume mounts over ~/.rh-agent
 COPY --from=build /tmp/skills/ /tmp/default-skills/
