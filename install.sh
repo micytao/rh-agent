@@ -203,42 +203,12 @@ dim "rh-agent update       Pull latest image"
 dim "rh-agent uninstall    Remove rh-agent"
 echo ""
 
-# ── Offer to launch immediately ──
-FIRST_TIME=false
+# ── Next steps ──
 if [ ! -f "$HOME/.rh-agent/config.json" ]; then
-  FIRST_TIME=true
+  printf "${BOLD}  Get started:${RESET}\n"
+  printf "    ${CYAN}rh-agent${RESET}  to launch the setup wizard and start chatting\n"
+else
+  printf "${BOLD}  Get started:${RESET}\n"
+  printf "    ${CYAN}rh-agent${RESET}  to start the interactive agent\n"
 fi
-
-if [ -e /dev/tty ]; then
-  if [ "$FIRST_TIME" = "true" ]; then
-    printf "${BOLD}  Ready to set up rh-agent? This takes about 1 minute.${RESET}\n"
-    printf "  You'll choose an LLM provider and enter an API key.\n"
-    echo ""
-    printf "  ${CYAN}Launch setup now? [Y/n]${RESET} "
-    read -r REPLY </dev/tty
-    case "$REPLY" in
-      [nN]*) echo ""; dim "Run 'rh-agent' when you're ready." ; echo "" ;;
-      *)
-        echo ""
-        if [ "$PATH_ADDED" = "false" ]; then
-          export PATH="$INSTALL_DIR:$PATH"
-        fi
-        exec "$WRAPPER" </dev/tty
-        ;;
-    esac
-  else
-    printf "${DIM}  Existing config found at ~/.rh-agent/config.json${RESET}\n"
-    printf "  ${CYAN}Launch rh-agent now? [Y/n]${RESET} "
-    read -r REPLY </dev/tty
-    case "$REPLY" in
-      [nN]*) echo "" ;;
-      *)
-        echo ""
-        if [ "$PATH_ADDED" = "false" ]; then
-          export PATH="$INSTALL_DIR:$PATH"
-        fi
-        exec "$WRAPPER" </dev/tty
-        ;;
-    esac
-  fi
-fi
+echo ""
