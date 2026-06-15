@@ -222,7 +222,7 @@ function postInstallSummary(): void {
     );
   }
   console.log(
-    `\n  ${c.bold("Ready!")} Try:  ${c.cyan('rh-agent "Is CVE-2024-6387 critical?"')}\n`,
+    `\n  ${c.bold("Ready!")} Try:  ${c.cyan('rh-agent "Is CVE-2026-31431 critical?"')}\n`,
   );
 }
 
@@ -331,6 +331,25 @@ export async function runOnboard(opts: {
     if (nextSetup) setups.push(nextSetup);
   }
 
+  // MCP opt-in
+  console.log(
+    c.bold("\n  Red Hat Security MCP") +
+      c.dim(" provides direct access to CVE and advisory data."),
+  );
+  console.log(
+    c.dim("  Without MCP, security skills still work via web search."),
+  );
+  const enableMcp = await confirm({
+    message: "Enable Red Hat Security MCP? (requires browser auth on first use)",
+    default: false,
+  });
+  if (enableMcp) {
+    console.log(
+      c.dim("  After setup, run ") + c.cyan("/mcp-auth") +
+        c.dim(" in the TUI to authenticate."),
+    );
+  }
+
   // Save all provider keys
   let hasCustom = false;
   let customSetup: ProviderSetup | undefined;
@@ -349,7 +368,7 @@ export async function runOnboard(opts: {
     provider: primary.providerId,
     model: primary.model,
     configured_providers: setups.map((s) => s.providerId),
-    mcp_enabled: true,
+    mcp_enabled: enableMcp,
     api_key_source: "env",
     base_url: primary.baseUrl,
     extra: Object.fromEntries(

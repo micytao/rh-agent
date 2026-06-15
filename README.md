@@ -71,18 +71,25 @@ Available models are fetched from the server automatically. A capable model (≥
 
 When running inside a container, rh-agent rewrites `localhost` to `host.containers.internal` automatically.
 
-## MCP Support
+## MCP Support (Optional)
 
-rh-agent integrates with [Model Context Protocol](https://modelcontextprotocol.io/) servers via `pi-mcp-adapter`. The Red Hat Security MCP is pre-configured.
+rh-agent integrates with [Model Context Protocol](https://modelcontextprotocol.io/) servers via `pi-mcp-adapter`. The Red Hat Security MCP provides direct access to CVE and advisory data. MCP is **disabled by default** for fast startup -- security skills still work via web search without it.
 
-To authenticate on first use:
+### Enabling MCP
+
+**During onboarding:** The setup wizard asks whether to enable MCP. Choose yes to activate it.
+
+**During a session:** Run `/mcp enable` in the TUI, then restart rh-agent.
+
+### After enabling
 
 ```
-/mcp-auth          # Opens browser-based OAuth flow
-/mcp               # Check MCP server status
+/mcp-auth          # Authenticate via browser-based OAuth (first time only)
+/mcp               # Check MCP server status, reconnect
+/mcp-off           # Disable MCP (takes effect on restart)
 ```
 
-MCP credentials are stored locally in `~/.rh-agent/agent/` and persist across container restarts.
+MCP credentials are stored locally in `~/.rh-agent/agent/` and persist across container restarts. Once authenticated, the server auto-connects on every startup.
 
 ## Skills (Lola)
 

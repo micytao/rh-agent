@@ -79,7 +79,7 @@ export function defaultConfig(): RHAgentConfig {
     provider: "openai",
     model: "gpt-4o",
     configured_providers: ["openai"],
-    mcp_enabled: true,
+    mcp_enabled: false,
     api_key_source: "env",
   };
 }

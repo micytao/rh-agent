@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -83,8 +83,9 @@ try {
   }
 } catch { /* non-critical */ }
 
-// Seed default mcp.json with Red Hat Security MCP if it doesn't exist yet.
-if (!existsSync(MCP_JSON_PATH)) {
+/** Seed mcp.json with Red Hat Security MCP when MCP is first enabled. */
+export function seedMcpJson(): void {
+  if (existsSync(MCP_JSON_PATH)) return;
   try {
     writeFileSync(
       MCP_JSON_PATH,
@@ -94,6 +95,7 @@ if (!existsSync(MCP_JSON_PATH)) {
             "red-hat-security": {
               type: "http",
               url: "https://security-mcp.api.redhat.com/mcp",
+              lifecycle: "eager",
             },
           },
         },
@@ -101,6 +103,13 @@ if (!existsSync(MCP_JSON_PATH)) {
         2,
       ) + "\n",
     );
+  } catch { /* non-critical */ }
+}
+
+/** Remove mcp.json when MCP is disabled. */
+export function removeMcpJson(): void {
+  try {
+    if (existsSync(MCP_JSON_PATH)) unlinkSync(MCP_JSON_PATH);
   } catch { /* non-critical */ }
 }
 

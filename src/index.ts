@@ -99,7 +99,13 @@ async function runAgent(query?: string): Promise<void> {
 
   // Adapt base URLs for the current runtime (localhost ↔ host.containers.internal)
   refreshModelsJsonBaseUrl();
-  refreshMcpJsonBaseUrls();
+
+  const { runQuery, runInteractive, seedMcpJson } = await import("./runner.js");
+
+  if (cfg.mcp_enabled) {
+    seedMcpJson();
+    refreshMcpJsonBaseUrls();
+  }
 
   if (!hasAnyProviderKey(cfg.configured_providers)) {
     console.log(
@@ -108,8 +114,6 @@ async function runAgent(query?: string): Promise<void> {
     );
     process.exit(1);
   }
-
-  const { runQuery, runInteractive } = await import("./runner.js");
 
   if (query) {
     await runQuery(cfg, query, values.model);

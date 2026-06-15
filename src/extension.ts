@@ -6,7 +6,8 @@ import type { ExtensionFactory, ExtensionCommandContext } from "@earendil-works/
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { c, truncateToWidth, visibleWidth } from "./ansi.js";
-import { collectModuleSummary } from "./runner.js";
+import { collectModuleSummary, seedMcpJson, removeMcpJson } from "./runner.js";
+import { loadConfig, saveConfig } from "./config.js";
 
 function getVersion(): string {
   try {
@@ -179,6 +180,62 @@ const rhAgentExtension: ExtensionFactory = (pi) => {
       return null;
     },
   });
+
+  // ── /mcp: MCP status and enable/disable toggle ──
+  // Only register when the adapter is NOT loaded (mcp_enabled: false) to avoid
+  // conflicting with the adapter's own /mcp command (which causes mcp:1, mcp:2).
+  const mcpCfg = loadConfig();
+  if (!mcpCfg?.mcp_enabled) {
+    pi.registerCommand("mcp", {
+      description: "Enable Red Hat Security MCP  (/mcp enable)",
+
+      async handler(args: string, ctx: ExtensionCommandContext) {
+        const sub = args.trim().toLowerCase();
+        const cfg = loadConfig();
+
+        if (sub === "enable") {
+          if (cfg) {
+            cfg.mcp_enabled = true;
+            saveConfig(cfg);
+            seedMcpJson();
+          }
+          ctx.ui.notify(
+            "MCP enabled. Restart rh-agent to connect, then run /mcp-auth to authenticate.",
+            "info",
+          );
+          return;
+        }
+
+        ctx.ui.notify(
+          "MCP: disabled\n" +
+            "  Run /mcp enable to activate Red Hat Security MCP",
+          "info",
+        );
+      },
+
+      getArgumentCompletions(prefix: string) {
+        return "enable".startsWith(prefix)
+          ? [{ label: "enable", value: "enable" }]
+          : null;
+      },
+    });
+  } else {
+    pi.registerCommand("mcp-off", {
+      description: "Disable MCP (takes effect on restart)",
+
+      async handler(_args: string, ctx: ExtensionCommandContext) {
+        const cfg = loadConfig();
+        if (cfg) {
+          cfg.mcp_enabled = false;
+          saveConfig(cfg);
+          removeMcpJson();
+        }
+        ctx.ui.notify("MCP disabled. Restart rh-agent to apply.", "info");
+      },
+
+      getArgumentCompletions() { return null; },
+    });
+  }
 };
 
 export default rhAgentExtension;
