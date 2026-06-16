@@ -35,7 +35,6 @@ if (values.help) {
     rh-agent onboard              Interactive setup wizard
     rh-agent status               Show current config and key validity
     rh-agent stop                 Stop the persistent container
-    rh-agent restart              Restart container on next run
     rh-agent                      Interactive chat mode
 
   Options:

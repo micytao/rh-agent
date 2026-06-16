@@ -25,7 +25,7 @@ On first run, `rh-agent` automatically walks you through onboarding -- choosing 
 
 - The container runs **rootless** with no elevated privileges
 - API keys and config are stored locally in `~/.rh-agent/` and are **never** sent to Red Hat or baked into the image
-- Only the current directory is mounted as `/workspace`
+- Only the current directory is mounted **read-only** as `/workspace`
 - Source code: [github.com/micytao/rh-agent](https://github.com/micytao/rh-agent)
 
 ## Usage
@@ -37,7 +37,6 @@ rh-agent onboard              # Re-run setup wizard
 rh-agent --session <id>       # Resume a previous session
 rh-agent update               # Pull the latest container image
 rh-agent stop                 # Stop the persistent container
-rh-agent restart              # Restart the container on next run
 rh-agent uninstall            # Remove the wrapper script
 ```
 
@@ -81,14 +80,14 @@ rh-agent integrates with [Model Context Protocol](https://modelcontextprotocol.i
 
 **During onboarding:** The setup wizard asks whether to enable MCP. Choose yes to activate it.
 
-**During a session:** Run `/mcp enable` in the TUI, then restart rh-agent.
+**During a session:** Run `/mcp enable` in the TUI, then exit and re-run rh-agent.
 
 ### After enabling
 
 ```
 /mcp-auth          # Authenticate via browser-based OAuth (first time only)
 /mcp               # Check MCP server status, reconnect
-/mcp-off           # Disable MCP (takes effect on restart)
+/mcp-off           # Disable MCP (takes effect on next run)
 ```
 
 MCP credentials are stored locally in `~/.rh-agent/agent/` and persist across container restarts. Once authenticated, the server auto-connects on every startup.
@@ -122,7 +121,6 @@ Skills are sourced from [RHEcosystemAppEng/agentic-collections](https://github.c
 The wrapper keeps the container running between sessions for near-instant subsequent launches. On first run, the container starts in the background; subsequent `rh-agent` invocations exec into the already-running container (~0.2s vs ~3-8s for a cold start).
 
 - `rh-agent stop` — Shut down the persistent container
-- `rh-agent restart` — Stop the container; it will restart automatically on next run
 - `rh-agent update` — Pull the latest image and stop the running container so the next run picks up the new version
 
 Short-lived commands (`status`, `onboard`) use the running container if available, or fall back to a one-shot `run --rm` to avoid leaving a persistent container behind unnecessarily.
@@ -157,7 +155,7 @@ podman run -it --rm \
 - `--security-opt label=disable` is required on SELinux-enabled systems (RHEL, Fedora)
 - `fd` and `ripgrep` are pre-installed in the image for instant startup
 - The `rh-basic` skill pack is seeded on first run from the image
-- The `/workspace` bind mount is set at container creation time; if you switch working directories, run `rh-agent restart` to re-mount
+- The `/workspace` bind mount is set at container creation time; the container auto-detects directory changes and recreates itself when needed
 
 ### Non-interactive setup (CI/scripts)
 

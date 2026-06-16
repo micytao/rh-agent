@@ -200,7 +200,7 @@ const rhAgentExtension: ExtensionFactory = (pi) => {
             seedMcpJson();
           }
           ctx.ui.notify(
-            "MCP enabled. Restart rh-agent to connect, then run /mcp-auth to authenticate.",
+            "MCP enabled. Exit and re-run rh-agent to connect, then run /mcp-auth to authenticate.",
             "info",
           );
           return;
@@ -221,7 +221,7 @@ const rhAgentExtension: ExtensionFactory = (pi) => {
     });
   } else {
     pi.registerCommand("mcp-off", {
-      description: "Disable MCP (takes effect on restart)",
+      description: "Disable MCP (takes effect on next run)",
 
       async handler(_args: string, ctx: ExtensionCommandContext) {
         const cfg = loadConfig();
@@ -230,7 +230,7 @@ const rhAgentExtension: ExtensionFactory = (pi) => {
           saveConfig(cfg);
           removeMcpJson();
         }
-        ctx.ui.notify("MCP disabled. Restart rh-agent to apply.", "info");
+        ctx.ui.notify("MCP disabled. Exit and re-run rh-agent to apply.", "info");
       },
 
       getArgumentCompletions() { return null; },

@@ -58,7 +58,7 @@ echo ""
 printf "    • The container runs ${BOLD}rootless${RESET} with no elevated privileges\n"
 printf "    • Your API keys and config are stored locally in ${CYAN}~/.rh-agent/${RESET}\n"
 printf "      and are ${BOLD}never${RESET} sent to Red Hat or baked into the image\n"
-printf "    • Only the current directory is mounted read/write as ${CYAN}/workspace${RESET}\n"
+printf "    • Only the current directory is mounted ${BOLD}read-only${RESET} as ${CYAN}/workspace${RESET}\n"
 printf "    • No other host files or directories are accessible to the container\n"
 printf "    • Source: ${YELLOW}${BOLD}https://github.com/micytao/rh-agent${RESET}\n"
 echo ""
@@ -159,11 +159,6 @@ if [ "$1" = "stop" ]; then
   exit 0
 fi
 
-if [ "$1" = "restart" ]; then
-  $RUNTIME rm -f "$CONTAINER_NAME" >/dev/null 2>&1
-  shift
-fi
-
 mkdir -p "$HOME/.rh-agent"
 
 EXTRA_FLAGS=""
@@ -185,19 +180,24 @@ case "$1" in
         --pull=never \
         $EXTRA_FLAGS \
         -v "$HOME/.rh-agent:/home/node/.rh-agent" \
-        -v "$(pwd)":/workspace \
+        -v "$(pwd)":/workspace:ro \
         -w /workspace \
         $IMAGE "$@"
     fi
     ;;
 esac
 
-# Fast path: if container is already running, just exec into it
+# Fast path: if container is already running, check workspace matches
 if $RUNTIME inspect --format '{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null | grep -q "true"; then
-  exec $RUNTIME exec -it \
-    -w /workspace \
-    "$CONTAINER_NAME" \
-    node /app/dist/index.js "$@"
+  CUR_DIR=$(cd -P . && pwd -P)
+  MOUNTED=$($RUNTIME inspect --format '{{range .Mounts}}{{if eq .Destination "/workspace"}}{{.Source}}{{end}}{{end}}' "$CONTAINER_NAME" 2>/dev/null)
+  CUR_DIR="${CUR_DIR%/}"
+  MOUNTED="${MOUNTED%/}"
+  if [ "$MOUNTED" = "$CUR_DIR" ]; then
+    exec $RUNTIME exec -it -w /workspace "$CONTAINER_NAME" node /app/dist/index.js "$@"
+  fi
+  printf "${DIM}  Workspace changed, restarting container...${RESET}\n"
+  $RUNTIME rm -f "$CONTAINER_NAME" >/dev/null 2>&1
 fi
 
 # Container not running — remove stale container (if any) and start fresh
@@ -211,7 +211,7 @@ $RUNTIME run -d \
   --pull=never \
   $EXTRA_FLAGS \
   -v "$HOME/.rh-agent:/home/node/.rh-agent" \
-  -v "$(pwd)":/workspace \
+  -v "$(pwd)":/workspace:ro \
   -w /workspace \
   $IMAGE --keep-alive >/dev/null 2>&1
 
@@ -276,7 +276,6 @@ dim "rh-agent              Start interactive agent"
 dim "rh-agent onboard      Re-run setup wizard"
 dim "rh-agent update       Pull latest image"
 dim "rh-agent stop         Stop persistent container"
-dim "rh-agent restart      Restart container on next run"
 dim "rh-agent uninstall    Remove rh-agent"
 echo ""
 
