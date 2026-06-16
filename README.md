@@ -34,6 +34,8 @@ rh-agent status               # Show config and validate keys
 rh-agent onboard              # Re-run setup wizard
 rh-agent --session <id>       # Resume a previous session
 rh-agent update               # Pull the latest container image
+rh-agent stop                 # Stop the persistent container
+rh-agent restart              # Restart the container on next run
 rh-agent uninstall            # Remove the wrapper script
 ```
 
@@ -113,6 +115,16 @@ Skills are sourced from [RHEcosystemAppEng/agentic-collections](https://github.c
 
 ## Container Details
 
+### Persistent container (fast startup)
+
+The wrapper keeps the container running between sessions for near-instant subsequent launches. On first run, the container starts in the background; subsequent `rh-agent` invocations exec into the already-running container (~0.2s vs ~3-8s for a cold start).
+
+- `rh-agent stop` — Shut down the persistent container
+- `rh-agent restart` — Stop the container; it will restart automatically on next run
+- `rh-agent update` — Pull the latest image and stop the running container so the next run picks up the new version
+
+Short-lived commands (`status`, `onboard`) use the running container if available, or fall back to a one-shot `run --rm` to avoid leaving a persistent container behind unnecessarily.
+
 ### Build from source
 
 ```bash
@@ -143,6 +155,7 @@ podman run -it --rm \
 - `--security-opt label=disable` is required on SELinux-enabled systems (RHEL, Fedora)
 - `fd` and `ripgrep` are pre-installed in the image for instant startup
 - The `rh-basic` skill pack is seeded on first run from the image
+- The `/workspace` bind mount is set at container creation time; if you switch working directories, run `rh-agent restart` to re-mount
 
 ### Non-interactive setup (CI/scripts)
 

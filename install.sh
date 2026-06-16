@@ -125,46 +125,120 @@ step "Step 3/3: Installing rh-agent command..."
 
 mkdir -p "$INSTALL_DIR"
 
-cat > "$WRAPPER" <<SCRIPT
+cat > "$WRAPPER" <<'SCRIPT'
 #!/bin/sh
-IMAGE="$IMAGE"
-RUNTIME="$RUNTIME"
+IMAGE="@@IMAGE@@"
+RUNTIME="@@RUNTIME@@"
+CONTAINER_NAME="rh-agent"
 
-if [ "\$1" = "update" ]; then
-  echo "Pulling latest \$IMAGE ..."
-  \$RUNTIME pull "\$IMAGE"
-  exit \$?
+DIM='\033[2m'
+RESET='\033[0m'
+
+if [ "$1" = "update" ]; then
+  echo "Pulling latest $IMAGE ..."
+  $RUNTIME pull "$IMAGE"
+  RC=$?
+  if [ $RC -eq 0 ]; then
+    $RUNTIME rm -f "$CONTAINER_NAME" >/dev/null 2>&1
+    echo "Container stopped — next run will use the new image."
+  fi
+  exit $RC
 fi
 
-if [ "\$1" = "uninstall" ]; then
+if [ "$1" = "uninstall" ]; then
   echo "Removing rh-agent..."
-  rm -f "$WRAPPER"
+  $RUNTIME rm -f "$CONTAINER_NAME" >/dev/null 2>&1
+  rm -f "@@WRAPPER@@"
   echo "Wrapper removed. Config remains at ~/.rh-agent (delete manually if desired)."
   exit 0
 fi
 
-mkdir -p "\$HOME/.rh-agent"
+if [ "$1" = "stop" ]; then
+  $RUNTIME rm -f "$CONTAINER_NAME" >/dev/null 2>&1
+  echo "rh-agent container stopped."
+  exit 0
+fi
+
+if [ "$1" = "restart" ]; then
+  $RUNTIME rm -f "$CONTAINER_NAME" >/dev/null 2>&1
+  echo "rh-agent container stopped. It will restart on next run."
+  exit 0
+fi
+
+mkdir -p "$HOME/.rh-agent"
 
 EXTRA_FLAGS=""
-if [ "\$RUNTIME" = "podman" ]; then
+if [ "$RUNTIME" = "podman" ]; then
   EXTRA_FLAGS="--userns=keep-id --security-opt label=disable"
 fi
 
-printf "\\033[2m  Starting rh-agent...\\033[0m\\n"
-printf "\\033[2m  ├ Cleaning up previous container...\\033[0m\\r"
-\$RUNTIME rm -f rh-agent >/dev/null 2>&1
-printf "\\033[2m  ├ Cleaned up                       \\033[0m\\n"
-printf "\\033[2m  ├ Launching container (\$RUNTIME)...\\033[0m\\n"
-printf "\\033[2m  └ Image: \$IMAGE\\033[0m\\n"
-exec \$RUNTIME run -it --rm \\
-  --name rh-agent \\
-  --pull=never \\
-  \$EXTRA_FLAGS \\
-  -v "\$HOME/.rh-agent:/home/node/.rh-agent" \\
-  -v "\$(pwd)":/workspace \\
-  -w /workspace \\
-  \$IMAGE "\$@"
+# Short-lived commands (status, onboard): use existing container if running,
+# otherwise do a one-shot run --rm (don't start a persistent container for these).
+case "$1" in
+  status|onboard)
+    if $RUNTIME inspect --format '{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null | grep -q "true"; then
+      exec $RUNTIME exec -it \
+        -w /workspace \
+        "$CONTAINER_NAME" \
+        node /app/dist/index.js "$@"
+    else
+      exec $RUNTIME run -it --rm \
+        --pull=never \
+        $EXTRA_FLAGS \
+        -v "$HOME/.rh-agent:/home/node/.rh-agent" \
+        -v "$(pwd)":/workspace \
+        -w /workspace \
+        $IMAGE "$@"
+    fi
+    ;;
+esac
+
+# Fast path: if container is already running, just exec into it
+if $RUNTIME inspect --format '{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null | grep -q "true"; then
+  exec $RUNTIME exec -it \
+    -w /workspace \
+    "$CONTAINER_NAME" \
+    node /app/dist/index.js "$@"
+fi
+
+# Container not running — remove stale container (if any) and start fresh
+$RUNTIME rm -f "$CONTAINER_NAME" >/dev/null 2>&1
+
+printf "${DIM}  Starting rh-agent container...${RESET}\n"
+
+# Start persistent container in background
+$RUNTIME run -d \
+  --name "$CONTAINER_NAME" \
+  --pull=never \
+  $EXTRA_FLAGS \
+  -v "$HOME/.rh-agent:/home/node/.rh-agent" \
+  -v "$(pwd)":/workspace \
+  -w /workspace \
+  $IMAGE --keep-alive >/dev/null 2>&1
+
+# Wait briefly for container to be ready
+TRIES=0
+while [ $TRIES -lt 20 ]; do
+  if $RUNTIME inspect --format '{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null | grep -q "true"; then
+    break
+  fi
+  sleep 0.1
+  TRIES=$((TRIES + 1))
+done
+
+# Exec interactive session into the running container
+exec $RUNTIME exec -it \
+  -w /workspace \
+  "$CONTAINER_NAME" \
+  node /app/dist/index.js "$@"
 SCRIPT
+
+# Inject actual values into the wrapper (heredoc uses 'SCRIPT' to avoid expansion)
+sed -i.bak \
+  -e "s|@@IMAGE@@|$IMAGE|g" \
+  -e "s|@@RUNTIME@@|$RUNTIME|g" \
+  -e "s|@@WRAPPER@@|$WRAPPER|g" \
+  "$WRAPPER" && rm -f "${WRAPPER}.bak"
 
 chmod +x "$WRAPPER"
 info "Installed to $WRAPPER"
@@ -202,6 +276,8 @@ printf "${BOLD}  Commands:${RESET}\n"
 dim "rh-agent              Start interactive agent"
 dim "rh-agent onboard      Re-run setup wizard"
 dim "rh-agent update       Pull latest image"
+dim "rh-agent stop         Stop persistent container"
+dim "rh-agent restart      Restart container on next run"
 dim "rh-agent uninstall    Remove rh-agent"
 echo ""
 
