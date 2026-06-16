@@ -150,9 +150,12 @@ if [ "\$RUNTIME" = "podman" ]; then
   EXTRA_FLAGS="--userns=keep-id --security-opt label=disable"
 fi
 
-printf "\\033[2m  Starting rh-agent...\\033[0m\\r"
-
+printf "\\033[2m  Starting rh-agent...\\033[0m\\n"
+printf "\\033[2m  ├ Cleaning up previous container...\\033[0m\\r"
 \$RUNTIME rm -f rh-agent >/dev/null 2>&1
+printf "\\033[2m  ├ Cleaned up                       \\033[0m\\n"
+printf "\\033[2m  ├ Launching container (\$RUNTIME)...\\033[0m\\n"
+printf "\\033[2m  └ Image: \$IMAGE\\033[0m\\n"
 exec \$RUNTIME run -it --rm \\
   --name rh-agent \\
   --pull=never \\
