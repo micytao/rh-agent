@@ -50,8 +50,9 @@ fi
 step "Building multi-arch image: ${FULL}"
 printf "${DIM}    Platforms: %s${RESET}\n" "$PLATFORMS"
 
-# Clean up any existing manifest with this name
+# Clean up any existing manifest/image with this name
 podman manifest rm "$FULL" 2>/dev/null || true
+podman rmi "$FULL" 2>/dev/null || true
 
 step "Creating manifest..."
 podman manifest create "$FULL"

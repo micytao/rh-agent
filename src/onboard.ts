@@ -128,11 +128,30 @@ async function promptExtraEnvVars(
   return extras;
 }
 
-async function fetchLocalModels(baseUrl: string): Promise<string[]> {
+interface FetchModelsResult {
+  models: string[];
+  tlsSkipped: boolean;
+}
+
+async function fetchLocalModels(baseUrl: string, apiKey?: string, skipTls = false): Promise<FetchModelsResult> {
+  const prevTls = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
   try {
+    if (skipTls) {
+      process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+    }
     process.stdout.write("  Fetching models from server... ");
-    const res = await fetch(`${baseUrl}/models`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const headers: Record<string, string> = {};
+    if (apiKey && apiKey !== "no-key") {
+      headers.Authorization = `Bearer ${apiKey}`;
+    }
+    const res = await fetch(`${baseUrl}/models`, {
+      headers,
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => "");
+      throw new Error(`HTTP ${res.status}${errBody ? `: ${errBody.slice(0, 120)}` : ""}`);
+    }
     const body = (await res.json()) as { data?: Array<{ id: string }> };
     const ids = (body.data ?? []).map((m) => m.id).filter(Boolean).sort();
     if (ids.length) {
@@ -140,34 +159,61 @@ async function fetchLocalModels(baseUrl: string): Promise<string[]> {
     } else {
       console.log(c.yellow("none found"));
     }
-    return ids;
-  } catch (e) {
-    console.log(c.yellow("could not connect"));
-    return [];
+    return { models: ids, tlsSkipped: skipTls };
+  } catch (e: unknown) {
+    const reason = e instanceof Error ? e.message : String(e);
+    const label = reason.startsWith("HTTP ") ? "server error" : "could not connect";
+    console.log(c.yellow(label));
+    console.log(c.dim(`    ${reason}`));
+    if (!skipTls && isTlsError(reason)) {
+      const skip = await confirm({
+        message: "TLS certificate verification failed. Skip verification for this endpoint?",
+        default: true,
+      });
+      if (skip) return fetchLocalModels(baseUrl, apiKey, true);
+    }
+    return { models: [], tlsSkipped: skipTls };
+  } finally {
+    if (prevTls === undefined) {
+      delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+    } else {
+      process.env.NODE_TLS_REJECT_UNAUTHORIZED = prevTls;
+    }
   }
 }
 
-async function promptModel(providerId: string, baseUrl?: string): Promise<string> {
+function isTlsError(message: string): boolean {
+  return /certificate|CERT|SSL|self.signed|UNABLE_TO_VERIFY/i.test(message);
+}
+
+interface ModelChoice {
+  model: string;
+  tlsSkipped: boolean;
+}
+
+async function promptModel(providerId: string, baseUrl?: string, apiKey?: string): Promise<ModelChoice> {
   const prov = PROVIDERS[providerId];
 
   if (providerId === "custom" && baseUrl) {
-    const models = await fetchLocalModels(baseUrl);
+    const { models, tlsSkipped } = await fetchLocalModels(baseUrl, apiKey);
     if (models.length) {
-      return select({
+      const chosen = await select({
         message: "Choose model:",
         choices: [
           ...models.map((m) => ({ name: m, value: m })),
           { name: "Enter a different model name", value: "__manual__" },
         ],
-      }).then((v) => v === "__manual__" ? promptManualModel() : v);
+      });
+      const model = chosen === "__manual__" ? await promptManualModel() : chosen;
+      return { model, tlsSkipped };
     }
     console.log(c.dim("  Make sure your server is running, or enter the model name manually."));
-    return promptManualModel();
+    return { model: await promptManualModel(), tlsSkipped };
   }
 
-  if (!prov.models.length) return promptManualModel();
+  if (!prov.models.length) return { model: await promptManualModel(), tlsSkipped: false };
 
-  return select({
+  const model = await select({
     message: "Choose default model:",
     choices: prov.models.map((m) => ({
       name: m === prov.defaultModel ? `${m}  (default)` : m,
@@ -175,6 +221,7 @@ async function promptModel(providerId: string, baseUrl?: string): Promise<string
     })),
     default: prov.defaultModel ?? prov.models[0],
   });
+  return { model, tlsSkipped: false };
 }
 
 async function promptManualModel(): Promise<string> {
@@ -258,7 +305,11 @@ async function configureOneProvider(
     baseUrl = extras.RH_AGENT_BASE_URL;
   }
 
-  const model = await promptModel(providerId, baseUrl);
+  const { model, tlsSkipped } = await promptModel(providerId, baseUrl, apiKey);
+
+  if (tlsSkipped) {
+    extras.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+  }
 
   if (providerId !== "custom") {
     process.stdout.write("\n  Validating API key... ");
