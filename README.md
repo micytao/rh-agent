@@ -1,5 +1,7 @@
 # rh-agent
 
+![rh-agent](rh-agent.png)
+
 Red Hat Agent -- a Node.js CLI that embeds the [Pi coding agent](https://pi.dev) runtime with Red Hat agentic skills for CVE analysis, lifecycle management, diagnostics, and support case guidance.
 
 ## Quick Install (Container)
