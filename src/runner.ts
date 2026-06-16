@@ -61,6 +61,16 @@ try {
         writeFileSync(slashCmdsPath, src);
       }
     }
+
+    const trustPath = join(piDistRoot, "dist", "core", "project-trust.js");
+    if (existsSync(trustPath)) {
+      let src = readFileSync(trustPath, "utf-8");
+      const old = "This allows pi to load .pi settings";
+      if (src.includes(old)) {
+        src = src.replace(old, "This allows rh-agent to load .rh-agent settings");
+        writeFileSync(trustPath, src);
+      }
+    }
   }
 } catch { /* non-critical -- in containers, patching is done at build time */ }
 

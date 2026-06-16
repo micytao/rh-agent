@@ -35,7 +35,24 @@ if (fs.existsSync(imPath)) {
   console.log("  interactive-mode.js not found, skipping");
 }
 
-// 3. Remove "model" from BUILTIN_SLASH_COMMANDS in slash-commands.js
+// 3. Rebrand the project trust prompt
+const ptPath = path.join(piRoot, "dist", "core", "project-trust.js");
+if (fs.existsSync(ptPath)) {
+  let src = fs.readFileSync(ptPath, "utf-8");
+  const original = "This allows pi to load .pi settings";
+  const replacement = "This allows rh-agent to load .rh-agent settings";
+  if (src.includes(original)) {
+    src = src.replace(original, replacement);
+    fs.writeFileSync(ptPath, src);
+    console.log("  patched project-trust.js (rebranded trust prompt)");
+  } else {
+    console.log("  project-trust.js: trust prompt not found (already patched?)");
+  }
+} else {
+  console.log("  project-trust.js not found, skipping");
+}
+
+// 4. Remove "model" from BUILTIN_SLASH_COMMANDS in slash-commands.js
 const scPath = path.join(piRoot, "dist", "core", "slash-commands.js");
 if (fs.existsSync(scPath)) {
   let src = fs.readFileSync(scPath, "utf-8");
