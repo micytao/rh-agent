@@ -146,7 +146,7 @@ function resolveMcpAdapterPath(): string | null {
 
 function buildPiArgs(
   cfg: RHAgentConfig,
-  opts: { modelOverride?: string; query?: string; sessionId?: string },
+  opts: { modelOverride?: string; sessionId?: string },
 ): string[] {
   const prov = PROVIDERS[cfg.provider] ?? PROVIDERS.openai;
   const modelId = opts.modelOverride ?? cfg.model;
@@ -171,10 +171,6 @@ function buildPiArgs(
     args.push("--session", opts.sessionId);
   }
 
-  if (opts.query) {
-    args.push("-p", opts.query);
-  }
-
   return args;
 }
 
@@ -188,20 +184,6 @@ export async function runInteractive(
 ): Promise<void> {
   const { main } = await import("@earendil-works/pi-coding-agent");
   await main(buildPiArgs(cfg, { modelOverride, sessionId }), {
-    extensionFactories: [rhAgentExtension, lolaExtension],
-  });
-}
-
-/**
- * Single-shot query using Pi's print mode.
- */
-export async function runQuery(
-  cfg: RHAgentConfig,
-  query: string,
-  modelOverride?: string,
-): Promise<void> {
-  const { main } = await import("@earendil-works/pi-coding-agent");
-  await main(buildPiArgs(cfg, { modelOverride, query }), {
     extensionFactories: [rhAgentExtension, lolaExtension],
   });
 }

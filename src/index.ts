@@ -34,7 +34,6 @@ if (values.help) {
   Usage:
     rh-agent onboard              Interactive setup wizard
     rh-agent status               Show current config and key validity
-    rh-agent "query"              Single-query mode
     rh-agent                      Interactive chat mode
 
   Options:
@@ -66,11 +65,10 @@ async function main(): Promise<void> {
     return;
   }
 
-  const query = command;
-  await runAgent(query);
+  await runAgent();
 }
 
-async function runAgent(query?: string): Promise<void> {
+async function runAgent(): Promise<void> {
   if (!isConfigured()) {
     console.log(
       c.yellow("\n  First time? Let's get you set up.\n"),
@@ -100,7 +98,7 @@ async function runAgent(query?: string): Promise<void> {
   // Adapt base URLs for the current runtime (localhost ↔ host.containers.internal)
   refreshModelsJsonBaseUrl();
 
-  const { runQuery, runInteractive, seedMcpJson } = await import("./runner.js");
+  const { runInteractive, seedMcpJson } = await import("./runner.js");
 
   if (cfg.mcp_enabled) {
     seedMcpJson();
@@ -115,11 +113,7 @@ async function runAgent(query?: string): Promise<void> {
     process.exit(1);
   }
 
-  if (query) {
-    await runQuery(cfg, query, values.model);
-  } else {
-    await runInteractive(cfg, values.model, values.session);
-  }
+  await runInteractive(cfg, values.model, values.session);
 }
 
 main().catch((err) => {
