@@ -30,10 +30,8 @@ On first run, `rh-agent` automatically walks you through onboarding -- choosing 
 
 ```bash
 rh-agent                      # Interactive TUI (auto-onboards on first run)
-rh-agent "query"              # Single-query mode
 rh-agent status               # Show config and validate keys
 rh-agent onboard              # Re-run setup wizard
-rh-agent --model gpt-4.1 "q"  # Override model for one run
 rh-agent --session <id>       # Resume a previous session
 rh-agent update               # Pull the latest container image
 rh-agent uninstall            # Remove the wrapper script

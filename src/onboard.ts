@@ -222,7 +222,7 @@ function postInstallSummary(): void {
     );
   }
   console.log(
-    `\n  ${c.bold("Ready!")} Try:  ${c.cyan('rh-agent "Is CVE-2026-31431 critical?"')}\n`,
+    `\n  ${c.bold("Ready!")} Run ${c.cyan("rh-agent")} to start chatting.\n`,
   );
 }
 
