@@ -161,8 +161,7 @@ fi
 
 if [ "$1" = "restart" ]; then
   $RUNTIME rm -f "$CONTAINER_NAME" >/dev/null 2>&1
-  echo "rh-agent container stopped. It will restart on next run."
-  exit 0
+  shift
 fi
 
 mkdir -p "$HOME/.rh-agent"
