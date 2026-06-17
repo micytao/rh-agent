@@ -6,6 +6,7 @@ import {
   LOLA_SKILLS_DIR,
   isRunningInContainer,
   type RHAgentConfig,
+  type CustomEndpoint,
   loadConfig,
   saveConfig,
   saveEnvKey,
@@ -20,6 +21,16 @@ import { join } from "node:path";
 
 function detectEnvKey(providerId: string): string | undefined {
   return process.env[PROVIDERS[providerId].envVar] || undefined;
+}
+
+function extractEndpointName(url: string): string {
+  try {
+    const host = new URL(url).hostname;
+    const parts = host.split(".");
+    return parts[0] === "www" ? parts[1] : parts[0];
+  } catch {
+    return "custom";
+  }
 }
 
 async function promptProvider(
@@ -278,15 +289,19 @@ interface ProviderSetup {
   apiKey: string;
   model: string;
   baseUrl?: string;
+  endpointName?: string;
   extras: Record<string, string>;
 }
 
 async function configureOneProvider(
   providerId: string,
+  usedEndpointNames: Set<string> = new Set(),
 ): Promise<ProviderSetup | null> {
   let apiKey: string;
   let baseUrl: string | undefined;
   const extras: Record<string, string> = {};
+
+  let endpointName: string | undefined;
 
   if (providerId === "custom") {
     console.log(
@@ -296,6 +311,18 @@ async function configureOneProvider(
         c.dim("\n  Good choices: Gemma 4, Qwen 2.5 32B, Llama 3.3 70B, Mistral Large."),
     );
     baseUrl = await promptBaseUrl();
+    const defaultName = extractEndpointName(baseUrl);
+    while (true) {
+      endpointName = (await input({
+        message: `Give this endpoint a short name (${defaultName}):`,
+      })).trim() || defaultName;
+      const normalized = endpointName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+      if (!usedEndpointNames.has(normalized)) {
+        usedEndpointNames.add(normalized);
+        break;
+      }
+      console.log(c.red(`  Name "${endpointName}" is already used. Choose a different name.`));
+    }
     apiKey = await promptCustomApiKey();
     extras.RH_AGENT_BASE_URL = baseUrl;
   } else {
@@ -326,7 +353,7 @@ async function configureOneProvider(
     }
   }
 
-  return { providerId, apiKey, model, baseUrl, extras };
+  return { providerId, apiKey, model, baseUrl, endpointName, extras };
 }
 
 export async function runOnboard(opts: {
@@ -353,10 +380,11 @@ export async function runOnboard(opts: {
   }
 
   const setups: ProviderSetup[] = [];
+  const usedEndpointNames = new Set<string>();
 
   // First provider (required)
   const firstProviderId = await promptProvider([], "Choose your default model provider:");
-  const firstSetup = await configureOneProvider(firstProviderId);
+  const firstSetup = await configureOneProvider(firstProviderId, usedEndpointNames);
   if (!firstSetup) {
     console.log(c.red("  Onboarding cancelled."));
     return false;
@@ -376,9 +404,9 @@ export async function runOnboard(opts: {
     });
     if (!addMore) break;
 
-    const configured = setups.map((s) => s.providerId);
+    const configured = setups.map((s) => s.providerId).filter((id) => id !== "custom");
     const nextId = await promptProvider(configured, "Choose an additional provider:");
-    const nextSetup = await configureOneProvider(nextId);
+    const nextSetup = await configureOneProvider(nextId, usedEndpointNames);
     if (nextSetup) setups.push(nextSetup);
   }
 
@@ -401,24 +429,40 @@ export async function runOnboard(opts: {
     );
   }
 
-  // Save all provider keys
-  let hasCustom = false;
-  let customSetup: ProviderSetup | undefined;
+  // Save all provider keys and build custom endpoint list
+  const customSetups = setups.filter((s) => s.providerId === "custom");
   for (const s of setups) {
+    if (s.providerId === "custom") continue;
     const prov = PROVIDERS[s.providerId];
     saveEnvKey(prov.envVar, s.apiKey);
     for (const [k, v] of Object.entries(s.extras)) saveEnvKey(k, v);
-    if (s.providerId === "custom") {
-      hasCustom = true;
-      customSetup = s;
+  }
+
+  // Save custom endpoints with indexed env vars
+  const customEndpoints: CustomEndpoint[] = [];
+  for (let i = 0; i < customSetups.length; i++) {
+    const s = customSetups[i];
+    const suffix = customSetups.length === 1 ? "" : `_${i}`;
+    const keyVar = `RH_AGENT_API_KEY${suffix}`;
+    const urlVar = `RH_AGENT_BASE_URL${suffix}`;
+    saveEnvKey(keyVar, s.apiKey);
+    saveEnvKey(urlVar, s.baseUrl!);
+    for (const [k, v] of Object.entries(s.extras)) {
+      if (k !== "RH_AGENT_BASE_URL" && k !== "RH_AGENT_API_KEY") saveEnvKey(k, v);
     }
+    customEndpoints.push({
+      baseUrl: s.baseUrl!,
+      apiKeyEnvVar: keyVar,
+      models: [s.model],
+      name: s.endpointName || extractEndpointName(s.baseUrl!),
+    });
   }
 
   const primary = setups[0];
   const cfg: RHAgentConfig = {
     provider: primary.providerId,
     model: primary.model,
-    configured_providers: setups.map((s) => s.providerId),
+    configured_providers: [...new Set(setups.map((s) => s.providerId))],
     mcp_enabled: enableMcp,
     api_key_source: "env",
     base_url: primary.baseUrl,
@@ -427,13 +471,8 @@ export async function runOnboard(opts: {
     ),
   };
   saveConfig(cfg);
-  if (hasCustom && customSetup) {
-    writeModelsJson({
-      ...cfg,
-      provider: "custom",
-      base_url: customSetup.baseUrl,
-      model: customSetup.model,
-    });
+  if (customEndpoints.length) {
+    writeModelsJson(customEndpoints);
   } else {
     removeModelsJson();
   }
@@ -503,8 +542,12 @@ async function runNonInteractive(authChoice?: string): Promise<boolean> {
     ),
   };
   saveConfig(cfg);
-  if (cfg.provider === "custom") {
-    writeModelsJson(cfg);
+  if (cfg.provider === "custom" && cfg.base_url) {
+    writeModelsJson([{
+      baseUrl: cfg.base_url,
+      apiKeyEnvVar: prov.envVar,
+      models: [cfg.model],
+    }]);
   } else {
     removeModelsJson();
   }

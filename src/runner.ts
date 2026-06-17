@@ -154,13 +154,29 @@ function resolveMcpAdapterPath(): string | null {
   }
 }
 
+const MODELS_JSON_PATH_LOCAL = join(AGENT_DIR, "models.json");
+
+function resolveCustomProvider(modelId: string): string {
+  try {
+    if (!existsSync(MODELS_JSON_PATH_LOCAL)) return "rh-agent-custom";
+    const raw = JSON.parse(readFileSync(MODELS_JSON_PATH_LOCAL, "utf-8"));
+    for (const [name, config] of Object.entries(raw.providers ?? {}) as [string, { models?: Array<{ id: string }> }][]) {
+      if (config.models?.some((m) => m.id === modelId)) return name;
+    }
+  } catch { /* fall through */ }
+  return "rh-agent-custom";
+}
+
 function buildPiArgs(
   cfg: RHAgentConfig,
   opts: { modelOverride?: string; sessionId?: string },
 ): string[] {
   const prov = PROVIDERS[cfg.provider] ?? PROVIDERS.openai;
   const modelId = opts.modelOverride ?? cfg.model;
-  const piProvider = cfg.provider === "custom" ? "rh-agent-custom" : prov.piProvider;
+
+  const piProvider = cfg.provider === "custom"
+    ? resolveCustomProvider(modelId)
+    : prov.piProvider;
 
   const args: string[] = [
     "--provider", piProvider,

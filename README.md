@@ -56,11 +56,11 @@ You can configure multiple model providers during onboarding. All API keys are l
 | Anthropic | `ANTHROPIC_API_KEY` | `anthropic-api-key` |
 | Google Gemini | `GEMINI_API_KEY` | `google-api-key` |
 | Azure OpenAI | `AZURE_OPENAI_API_KEY` | `azure-api-key` |
-| Custom endpoint | `RH_AGENT_API_KEY` | `custom-api-key` |
+| Custom endpoint(s) | `RH_AGENT_API_KEY[_N]` | `custom-api-key` |
 
-## Local Model Support
+## Custom Endpoint Support
 
-Select **Custom (OpenAI-compatible endpoint)** during onboarding to use a local inference server. The wizard offers presets for:
+Select **Custom (OpenAI-compatible endpoint)** during onboarding to connect to any OpenAI-compatible inference server -- local or remote. The wizard offers presets for common local servers:
 
 | Server | Default URL |
 |--------|-------------|
@@ -68,9 +68,23 @@ Select **Custom (OpenAI-compatible endpoint)** during onboarding to use a local 
 | vLLM | `http://localhost:8000/v1` |
 | LM Studio | `http://localhost:1234/v1` |
 
-Available models are fetched from the server automatically. A capable model (≥12B parameters) is recommended for reliable tool-calling and skill usage.
+You can also enter a custom URL for remote services like Red Hat MaaS, Together AI, or any OpenAI-compatible endpoint.
 
-When running inside a container, rh-agent rewrites `localhost` to `host.containers.internal` automatically.
+### Multiple custom endpoints
+
+You can configure **multiple custom endpoints** during onboarding. Each gets:
+- A user-chosen name (used as the provider identifier, e.g. "maas", "ollama-local")
+- Its own API key (stored as indexed env vars: `RH_AGENT_API_KEY_0`, `RH_AGENT_API_KEY_1`, etc.)
+- Its own model list (fetched from the server during setup)
+
+Switch between all configured models at runtime using `/model` in the TUI.
+
+### How it works
+
+- Available models are fetched automatically from the server (with the API key, if provided)
+- A capable model (≥12B parameters) is recommended for reliable tool-calling and skill usage
+- When running inside a container, rh-agent rewrites `localhost` to `host.containers.internal` automatically
+- If the server's TLS certificate is not trusted, rh-agent offers to skip verification and persists the choice
 
 ## MCP Support (Optional)
 
@@ -143,7 +157,7 @@ podman run -it --rm \
   --userns=keep-id \
   --security-opt label=disable \
   -v ~/.rh-agent:/home/node/.rh-agent \
-  -v $(pwd):/workspace \
+  -v $(pwd):/workspace:ro \
   -w /workspace \
   quay.io/rh_ee_micyang/rh-agent:latest
 ```
@@ -169,10 +183,10 @@ rh-agent onboard --non-interactive --auth-choice openai-api-key
 ```
 ~/.rh-agent/
 ├── config.json          # Provider, model, configured_providers list
-├── .env                 # API keys for all configured providers
+├── .env                 # API keys (RH_AGENT_API_KEY_0, RH_AGENT_API_KEY_1, etc.)
 └── agent/
     ├── settings.json    # Pi runtime settings
-    ├── models.json      # Custom endpoint model definitions (if configured)
+    ├── models.json      # Custom endpoint definitions (named providers + models)
     ├── mcp.json         # MCP server configuration
     └── skills/          # Lola-managed skill packs
         ├── .lola-manifest.json

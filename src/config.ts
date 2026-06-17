@@ -276,31 +276,44 @@ export function maskKey(key: string): string {
 
 const MODELS_JSON_PATH = join(AGENT_DIR, "models.json");
 
-export function writeModelsJson(cfg: RHAgentConfig): void {
-  if (cfg.provider !== "custom" || !cfg.base_url) return;
+export interface CustomEndpoint {
+  baseUrl: string;
+  apiKeyEnvVar: string;
+  models: string[];
+  name?: string;
+}
+
+export function writeModelsJson(endpoints: CustomEndpoint[]): void {
+  if (!endpoints.length) return;
 
   mkdirSync(AGENT_DIR, { recursive: true });
 
-  const modelsJson = {
-    providers: {
-      "rh-agent-custom": {
-        name: "Custom Local Model",
-        baseUrl: adaptBaseUrl(cfg.base_url),
-        apiKey: "$RH_AGENT_API_KEY",
-        api: "openai-completions",
-        models: [
-          {
-            id: cfg.model,
-            name: cfg.model,
-            contextWindow: 131072,
-            maxTokens: 4096,
-          },
-        ],
-      },
-    },
-  };
+  const providers: Record<string, unknown> = {};
+  const usedKeys = new Set<string>();
+  for (let i = 0; i < endpoints.length; i++) {
+    const ep = endpoints[i];
+    let key = ep.name
+      ? ep.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
+      : "rh-agent-custom";
+    if (!key) key = "rh-agent-custom";
+    if (usedKeys.has(key)) key = `${key}-${i}`;
+    usedKeys.add(key);
+    const name = ep.name || (endpoints.length === 1 ? "Custom Endpoint" : `Custom Endpoint ${i + 1}`);
+    providers[key] = {
+      name,
+      baseUrl: adaptBaseUrl(ep.baseUrl),
+      apiKey: `$${ep.apiKeyEnvVar}`,
+      api: "openai-completions",
+      models: ep.models.map((m) => ({
+        id: m,
+        name: m,
+        contextWindow: 131072,
+        maxTokens: 4096,
+      })),
+    };
+  }
 
-  writeFileSync(MODELS_JSON_PATH, JSON.stringify(modelsJson, null, 2) + "\n");
+  writeFileSync(MODELS_JSON_PATH, JSON.stringify({ providers }, null, 2) + "\n");
 }
 
 /**
