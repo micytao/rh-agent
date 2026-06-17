@@ -180,8 +180,9 @@ case "$1" in
       exec $RUNTIME run -it --rm \
         --pull=never \
         $EXTRA_FLAGS \
+        -p 19876:19876 \
         -v "$HOME/.rh-agent:/home/node/.rh-agent" \
-        -v "$(pwd)":/workspace:ro \
+        -v "$(cd -P . && pwd -P)":/workspace:ro \
         -w /workspace \
         $IMAGE "$@"
     fi
@@ -211,8 +212,9 @@ $RUNTIME run -d \
   --name "$CONTAINER_NAME" \
   --pull=never \
   $EXTRA_FLAGS \
+  -p 19876:19876 \
   -v "$HOME/.rh-agent:/home/node/.rh-agent" \
-  -v "$(pwd)":/workspace:ro \
+  -v "$(cd -P . && pwd -P)":/workspace:ro \
   -w /workspace \
   $IMAGE --keep-alive >/dev/null 2>&1
 

@@ -106,6 +106,10 @@ rh-agent integrates with [Model Context Protocol](https://modelcontextprotocol.i
 
 MCP credentials are stored locally in `~/.rh-agent/agent/` and persist across container restarts. Once authenticated, the server auto-connects on every startup.
 
+### OAuth callback
+
+The `/mcp-auth` flow opens a browser for Red Hat SSO login. After authentication, the browser redirects to `http://localhost:19876/callback` where the container receives the token. The container publishes port **19876** specifically for this purpose -- ensure it is not in use on your host when running `/mcp-auth`.
+
 ## Skills (Lola)
 
 Skills are managed by the **Lola** extension inside the TUI. The container comes with the `rh-basic` pack pre-installed.

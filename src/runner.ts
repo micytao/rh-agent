@@ -93,9 +93,14 @@ try {
   }
 } catch { /* non-critical */ }
 
+const MCP_OAUTH_REDIRECT_URI = "http://localhost:19876/callback";
+
 /** Seed mcp.json with Red Hat Security MCP when MCP is first enabled. */
 export function seedMcpJson(): void {
-  if (existsSync(MCP_JSON_PATH)) return;
+  if (existsSync(MCP_JSON_PATH)) {
+    ensureMcpOAuthRedirect();
+    return;
+  }
   try {
     writeFileSync(
       MCP_JSON_PATH,
@@ -106,6 +111,9 @@ export function seedMcpJson(): void {
               type: "http",
               url: "https://security-mcp.api.redhat.com/mcp",
               lifecycle: "eager",
+              oauth: {
+                redirectUri: MCP_OAUTH_REDIRECT_URI,
+              },
             },
           },
         },
@@ -113,6 +121,19 @@ export function seedMcpJson(): void {
         2,
       ) + "\n",
     );
+  } catch { /* non-critical */ }
+}
+
+/** Migrate existing mcp.json: ensure red-hat-security has oauth.redirectUri. */
+function ensureMcpOAuthRedirect(): void {
+  try {
+    const raw = JSON.parse(readFileSync(MCP_JSON_PATH, "utf-8"));
+    const rhs = raw?.mcpServers?.["red-hat-security"];
+    if (!rhs) return;
+    if (rhs.oauth?.redirectUri === MCP_OAUTH_REDIRECT_URI) return;
+    if (!rhs.oauth) rhs.oauth = {};
+    rhs.oauth.redirectUri = MCP_OAUTH_REDIRECT_URI;
+    writeFileSync(MCP_JSON_PATH, JSON.stringify(raw, null, 2) + "\n");
   } catch { /* non-critical */ }
 }
 

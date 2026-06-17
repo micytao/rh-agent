@@ -64,5 +64,6 @@ RUN chmod 775 /home/node && chgrp 0 /home/node
 
 ENV NODE_ENV=production
 ENV HOME=/home/node
+ENV NODE_OPTIONS="--dns-result-order=ipv4first"
 
 ENTRYPOINT ["docker-entrypoint.sh"]
