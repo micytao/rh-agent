@@ -1,7 +1,7 @@
 {
   "name": "rh-agent",
   "version": "0.1.0",
-  "description": "Red Hat Agent -- powered by Pi coding agent + bundled Red Hat skills.",
+  "description": "Minimalist harness for the Red Hat ecosystem.",
   "type": "module",
   "bin": {
     "rh-agent": "dist/index.js"

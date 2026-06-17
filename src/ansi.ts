@@ -45,6 +45,6 @@ export const c = {
   boldRed: (text: string) => wrap("1;31", text),
   boldGreen: (text: string) => wrap("1;32", text),
   boldCyan: (text: string) => wrap("1;36", text),
-  /** Red Hat red (#EE0000) using truecolor escape */
+  /** Brand red (#EE0000) using truecolor escape */
   rhRed: (text: string) => wrap("1;38;2;238;0;0", text),
 };

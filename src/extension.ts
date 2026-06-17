@@ -38,7 +38,7 @@ const rhAgentExtension: ExtensionFactory = (pi) => {
       render(width: number): string[] {
         const art = BANNER.map((line) => truncateToWidth(c.rhRed(line), width));
         const info = truncateToWidth(
-          theme.fg("dim", "  Red Hat Agent v") +
+          theme.fg("dim", "  rh-agent v") +
           theme.fg("dim", version) +
           theme.fg("dim", " (powered by Pi)"),
           width,

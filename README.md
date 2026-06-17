@@ -2,7 +2,7 @@
 
 ![rh-agent](rh-agent.png)
 
-Red Hat Agent -- a Node.js CLI that embeds the [Pi coding agent](https://pi.dev) runtime with Red Hat agentic skills for CVE analysis, lifecycle management, diagnostics, and support case guidance.
+AI assistant for the Red Hat ecosystem -- a Node.js CLI that embeds the [Pi coding agent](https://pi.dev) runtime with agentic skills for CVE analysis, lifecycle management, diagnostics, and support case guidance.
 
 ## Quick Install (Container)
 
@@ -24,7 +24,7 @@ On first run, `rh-agent` automatically walks you through onboarding -- choosing 
 ### Security & Privacy
 
 - The container runs **rootless** with no elevated privileges
-- API keys and config are stored locally in `~/.rh-agent/` and are **never** sent to Red Hat or baked into the image
+- API keys and config are stored locally in `~/.rh-agent/` and are **never** sent anywhere or baked into the image
 - Only the current directory is mounted **read-only** as `/workspace`
 - Source code: [github.com/micytao/rh-agent](https://github.com/micytao/rh-agent)
 

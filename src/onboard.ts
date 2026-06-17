@@ -360,7 +360,7 @@ export async function runOnboard(opts: {
   nonInteractive?: boolean;
   authChoice?: string;
 }): Promise<boolean> {
-  console.log(c.boldRed("\n  Red Hat Agent") + c.dim(" -- Setup\n"));
+  console.log(c.boldRed("\n  rh-agent") + c.dim(" -- Setup\n"));
 
   const existing = loadConfig();
   if (existing && !opts.nonInteractive) {

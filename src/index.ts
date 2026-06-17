@@ -29,7 +29,7 @@ const { values, positionals } = parseArgs({
 
 if (values.help) {
   console.log(`
-  ${c.boldRed("rh-agent")} -- Red Hat Agent
+  ${c.boldRed("rh-agent")} -- Minimalist harness for the Red Hat ecosystem
 
   Usage:
     rh-agent onboard              Interactive setup wizard
