@@ -23,7 +23,7 @@ error() { printf "${RED}  ✗ %s${RESET}\n" "$*" >&2; }
 # ── Welcome banner ──
 echo ""
 printf "${RH_RED}         __                                 __ ${RESET}\n"
-printf "${RH_RED}   _____/ /_        ____ _____ ____  ____  / /_${RESET}\n"
+printf "${RH_RED}   _____/ /_        ____  ____  ___  ____  / /_${RESET}\n"
 printf "${RH_RED}  / ___/ __ \\______/ __ \`/ __ \`/ _ \\/ __ \\/ __/${RESET}\n"
 printf "${RH_RED} / /  / / / /_____/ /_/ / /_/ /  __/ / / / /_  ${RESET}\n"
 printf "${RH_RED}/_/  /_/ /_/      \\__,_/\\__, /\\___/_/ /_/\\__/  ${RESET}\n"
