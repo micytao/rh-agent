@@ -110,6 +110,14 @@ MCP credentials are stored locally in `~/.rh-agent/agent/` and persist across co
 
 The `/mcp-auth` flow opens a browser for Red Hat SSO login. After authentication, the browser redirects to `http://localhost:19876/callback` where the container receives the token. The container publishes port **19876** specifically for this purpose -- ensure it is not in use on your host when running `/mcp-auth`.
 
+**Remote/VPS usage:** If rh-agent is running on a remote server, the redirect to `localhost:19876` won't reach it because your browser is on your local machine. Set up an SSH tunnel first:
+
+```
+ssh -L 19876:localhost:19876 user@your-server
+```
+
+Then run `/mcp-auth` in the tunneled session, copy the auth URL to your local browser, and log in. The redirect will tunnel back through SSH to the server. This is a one-time setup -- the token persists after authentication.
+
 ## Skills (Lola)
 
 Skills are managed by the **Lola** extension inside the TUI. The container comes with the `rh-basic` pack pre-installed.
