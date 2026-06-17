@@ -52,7 +52,24 @@ if (fs.existsSync(ptPath)) {
   console.log("  project-trust.js not found, skipping");
 }
 
-// 4. Remove "model" from BUILTIN_SLASH_COMMANDS in slash-commands.js
+// 4. Patch MCP callback server to bind 0.0.0.0 (required for container port forwarding)
+const mcpAdapterRoot = path.join(__dirname, "..", "node_modules", "pi-mcp-adapter");
+const cbsPath = path.join(mcpAdapterRoot, "mcp-callback-server.ts");
+if (fs.existsSync(cbsPath)) {
+  let src = fs.readFileSync(cbsPath, "utf-8");
+  const original = "candidateServer.listen(listenPort, requestedHost,";
+  if (src.includes(original)) {
+    src = src.replace(original, 'candidateServer.listen(listenPort, "0.0.0.0",');
+    fs.writeFileSync(cbsPath, src);
+    console.log("  patched mcp-callback-server.ts (bind 0.0.0.0 for port forwarding)");
+  } else {
+    console.log("  mcp-callback-server.ts: listen call not found (already patched?)");
+  }
+} else {
+  console.log("  mcp-callback-server.ts not found, skipping");
+}
+
+// 5. Remove "model" from BUILTIN_SLASH_COMMANDS in slash-commands.js
 const scPath = path.join(piRoot, "dist", "core", "slash-commands.js");
 if (fs.existsSync(scPath)) {
   let src = fs.readFileSync(scPath, "utf-8");
