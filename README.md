@@ -4,6 +4,8 @@
 
 AI assistant for the Red Hat ecosystem -- a Node.js CLI that embeds the [Pi coding agent](https://pi.dev) runtime with agentic skills for CVE analysis, lifecycle management, diagnostics, and support case guidance.
 
+> **Disclaimer:** This is a personal experimental project and is **not** a Red Hat product or service. It is not affiliated with, endorsed by, or supported by Red Hat, Inc. The project uses publicly accessible Red Hat agentic skill collections and MCP servers to retrieve Red Hat product and service information. Red Hat and related product names are trademarks of Red Hat, Inc.
+
 ## Quick Install (Container)
 
 The recommended way to install rh-agent is via the one-liner:
@@ -219,3 +221,4 @@ npm install -g .    # install globally for testing
 ```
 
 > **Note:** Do not use `install.sh` on the same machine where you develop with `npm install -g .` -- the container wrapper at `~/.local/bin/rh-agent` would shadow the npm-installed binary.
+
