@@ -2125,6 +2125,27 @@ async function runAgent(userMessage) {
                     results.push({ call, name, args, result });
                 }
 
+                // Self-explanatory tools: render result directly without another generation pass
+                const DIRECT_DISPLAY_TOOLS = new Set(["listSkills", "listScripts", "getCurrentTime"]);
+                if (results.length === 1 && DIRECT_DISPLAY_TOOLS.has(results[0].name)) {
+                    const { name, result } = results[0];
+                    let formatted;
+                    if (name === "listSkills") {
+                        const skills = Array.isArray(result) ? result : [];
+                        formatted = "## Available Skills\n\n" + skills.map(s => `- **${s.name}**: ${s.description}`).join("\n");
+                    } else if (name === "listScripts") {
+                        const scripts = Array.isArray(result) ? result : [];
+                        formatted = "## Available Scripts\n\n" + (scripts.length ? scripts.map(s => `- \`${s.key}\` (${s.language}) — ${s.module}`).join("\n") : "No scripts loaded.");
+                    } else if (name === "getCurrentTime") {
+                        formatted = `The current time is **${result.time}** (${result.timezone}).`;
+                    } else {
+                        formatted = "```json\n" + JSON.stringify(result, null, 2) + "\n```";
+                    }
+                    addMessage("assistant", formatted);
+                    state.messages.push({ role: "assistant", content: formatted });
+                    break;
+                }
+
                 if (isNative) {
                     // Native tool calls — use standard role:"tool" format
                     state.messages.push({
