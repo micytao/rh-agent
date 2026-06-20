@@ -2361,30 +2361,131 @@ async function discoverAuthServerMetadata(authServerUrl) {
 }
 
 // Step 3: Dynamic Client Registration per RFC 7591
-async function dynamicClientRegister(registrationEndpoint, redirectUri, serverUrl) {
-    const cacheKey = `mcp-dcr:${registrationEndpoint}:${redirectUri}`;
+async function dynamicClientRegister(registrationEndpoint, { redirectUri, grantTypes = ["authorization_code"], responseTypes = ["code"] } = {}) {
+    const cacheKey = `mcp-dcr:${registrationEndpoint}:${grantTypes.join(",")}:${redirectUri || "none"}`;
     const cached = sessionStorage.getItem(cacheKey);
     if (cached) {
         try { return JSON.parse(cached); } catch { /* re-register */ }
     }
 
+    const regBody = {
+        client_name: "RH-Agent WebGPU",
+        grant_types: grantTypes,
+        response_types: responseTypes,
+        token_endpoint_auth_method: "none",
+        scope: "openid",
+    };
+    if (redirectUri) regBody.redirect_uris = [redirectUri];
+
     const resp = await corsFetch(registrationEndpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-            client_name: "RH-Agent WebGPU",
-            redirect_uris: [redirectUri],
-            grant_types: ["authorization_code"],
-            response_types: ["code"],
-            token_endpoint_auth_method: "none",
-            scope: "openid",
-        }),
+        body: JSON.stringify(regBody),
         signal: AbortSignal.timeout(15_000),
     });
     if (!resp.ok) throw new Error(`Dynamic client registration failed: HTTP ${resp.status}`);
     const data = await resp.json();
     sessionStorage.setItem(cacheKey, JSON.stringify(data));
     return data;
+}
+
+// ─── Device Code Flow (RFC 8628) for non-localhost deployments ───────────────
+function showDeviceCodeOverlay(userCode, verificationUri) {
+    let overlay = document.getElementById("device-code-overlay");
+    if (overlay) overlay.remove();
+    overlay = document.createElement("div");
+    overlay.id = "device-code-overlay";
+    overlay.className = "fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm";
+    overlay.innerHTML = `
+        <div class="bg-gray-900 border border-gray-700/60 rounded-2xl p-8 max-w-sm w-full mx-4 text-center space-y-5 shadow-2xl">
+            <div class="text-emerald-400">
+                <svg class="w-10 h-10 mx-auto" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+                    <path d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z"/>
+                </svg>
+            </div>
+            <div>
+                <p class="text-sm text-gray-400 mb-3">Visit the link below and enter this code:</p>
+                <div class="font-mono text-2xl font-bold text-white tracking-widest bg-gray-800 rounded-xl py-3 px-4 select-all">${userCode}</div>
+            </div>
+            <a href="${verificationUri}" target="_blank" rel="noopener"
+               class="block bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold py-2.5 px-6 rounded-lg transition">
+                Open Login Page
+            </a>
+            <p class="text-[10px] text-gray-600">Waiting for authentication...</p>
+            <button id="device-code-cancel" class="text-xs text-gray-500 hover:text-gray-300 transition">Cancel</button>
+        </div>`;
+    document.body.appendChild(overlay);
+    return overlay;
+}
+
+function hideDeviceCodeOverlay() {
+    document.getElementById("device-code-overlay")?.remove();
+}
+
+async function startDeviceCodeFlow(serverUrl, asm, clientId, scope, resource) {
+    const body = new URLSearchParams({ client_id: clientId, scope });
+    if (resource) body.set("resource", resource);
+
+    const resp = await corsFetch(asm.device_authorization_endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body,
+    });
+    if (!resp.ok) {
+        const errText = await resp.text().catch(() => "");
+        throw new Error(`Device code request failed: HTTP ${resp.status} ${errText.slice(0, 200)}`);
+    }
+    const data = await resp.json();
+    const userCode = data.user_code;
+    const verifyUrl = data.verification_uri_complete || data.verification_uri;
+    const interval = Math.max((data.interval || 5) * 1000, 5000);
+    const expiresAt = Date.now() + (data.expires_in || 600) * 1000;
+
+    appendLog(`MCP OAuth: enter code ${userCode} at ${verifyUrl}`, "text-amber-400");
+    const overlay = showDeviceCodeOverlay(userCode, verifyUrl);
+
+    return new Promise((resolve, reject) => {
+        let cancelled = false;
+        const cancelBtn = overlay.querySelector("#device-code-cancel");
+        if (cancelBtn) cancelBtn.addEventListener("click", () => { cancelled = true; });
+
+        const poll = setInterval(async () => {
+            if (cancelled) {
+                clearInterval(poll);
+                hideDeviceCodeOverlay();
+                reject(new Error("Cancelled by user"));
+                return;
+            }
+            if (Date.now() > expiresAt) {
+                clearInterval(poll);
+                hideDeviceCodeOverlay();
+                reject(new Error("Device code expired"));
+                return;
+            }
+            try {
+                const tokenResp = await corsFetch(asm.token_endpoint, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                    body: new URLSearchParams({
+                        grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+                        device_code: data.device_code,
+                        client_id: clientId,
+                    }),
+                });
+                const tokenData = await tokenResp.json();
+                if (tokenData.error === "authorization_pending" || tokenData.error === "slow_down") return;
+                if (tokenData.error) {
+                    clearInterval(poll);
+                    hideDeviceCodeOverlay();
+                    reject(new Error(tokenData.error_description || tokenData.error));
+                    return;
+                }
+                clearInterval(poll);
+                hideDeviceCodeOverlay();
+                resolve(tokenData.access_token);
+            } catch { /* network error, keep polling */ }
+        }, interval);
+    });
 }
 
 async function startOAuthFlow(serverUrl) {
@@ -2411,13 +2512,65 @@ async function startOAuthFlow(serverUrl) {
             return;
         }
 
+        const isLocalhost = ["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname);
+        const scope = resourceScopes.length > 0 ? resourceScopes.join(" ") : "openid";
+
+        // Non-localhost: try device code flow (no redirect_uri needed)
+        if (!isLocalhost) {
+            const supportsDeviceGrant = (asm.grant_types_supported || []).includes("urn:ietf:params:oauth:grant-type:device_code");
+            let deviceEndpoint = asm.device_authorization_endpoint;
+
+            // If the proxy doesn't advertise the endpoint but supports the grant,
+            // discover it from the underlying SSO server via jwks_uri or userinfo
+            if (!deviceEndpoint && supportsDeviceGrant) {
+                const ssoBase = (asm.jwks_uri || asm.userinfo_endpoint || "").replace(/\/protocol\/openid-connect\/.*$/, "");
+                if (ssoBase) {
+                    try {
+                        const ssoMeta = await corsFetch(`${ssoBase}/.well-known/openid-configuration`);
+                        if (ssoMeta.ok) {
+                            const ssoAsm = await ssoMeta.json();
+                            deviceEndpoint = ssoAsm.device_authorization_endpoint;
+                        }
+                    } catch { /* discovery failed */ }
+                }
+            }
+
+            if (!deviceEndpoint) {
+                appendLog(`MCP OAuth: auth server does not support device code flow. Login requires localhost.`, "text-red-400");
+                return;
+            }
+
+            const asmWithDevice = { ...asm, device_authorization_endpoint: deviceEndpoint };
+            try {
+                let clientId;
+                if (asm.registration_endpoint) {
+                    const reg = await dynamicClientRegister(asm.registration_endpoint, {
+                        grantTypes: ["urn:ietf:params:oauth:grant-type:device_code"],
+                        responseTypes: [],
+                    });
+                    clientId = reg.client_id;
+                    appendLog(`MCP OAuth: registered device client "${clientId}"`, "text-gray-400");
+                }
+                if (!clientId) {
+                    appendLog(`MCP OAuth: no client_id for device flow`, "text-red-400");
+                    return;
+                }
+                const token = await startDeviceCodeFlow(serverUrl, asmWithDevice, clientId, scope, resource);
+                await finishOAuthFlow({ serverUrl, accessToken: token });
+                return;
+            } catch (e) {
+                appendLog(`MCP OAuth device flow: ${e.message}`, "text-red-400");
+                return;
+            }
+        }
+
         const redirectUri = `${window.location.origin}${window.location.pathname}`;
         let clientId;
 
         // 3. Dynamic Client Registration if supported
         if (asm.registration_endpoint) {
             try {
-                const reg = await dynamicClientRegister(asm.registration_endpoint, redirectUri, serverUrl);
+                const reg = await dynamicClientRegister(asm.registration_endpoint, { redirectUri });
                 clientId = reg.client_id;
                 appendLog(`MCP OAuth: registered client "${clientId}"`, "text-gray-400");
             } catch (e) {
@@ -2430,11 +2583,10 @@ async function startOAuthFlow(serverUrl) {
             return;
         }
 
-        // 4. PKCE Authorization Code flow
+        // 4. PKCE Authorization Code flow (localhost only)
         const codeVerifier = generateCodeVerifier();
         const codeChallenge = await generateCodeChallenge(codeVerifier);
         const oauthState = crypto.randomUUID();
-        const scope = resourceScopes.length > 0 ? resourceScopes.join(" ") : "openid";
 
         const params = new URLSearchParams({
             response_type: "code",
