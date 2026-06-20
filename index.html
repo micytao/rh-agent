@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://cdn.tailwindcss.com 'unsafe-inline' 'unsafe-eval' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; connect-src *; img-src 'self' data:;">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://cdn.tailwindcss.com 'unsafe-inline' 'unsafe-eval' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; connect-src *; img-src 'self' data:; form-action *;">
     <meta property="og:title" content="WebGPU RH-Agent">
     <meta property="og:description" content="AI agent running entirely in your browser via WebGPU. No server, no API keys, complete privacy.">
     <meta property="og:type" content="website">
@@ -84,13 +84,35 @@
 
     <!-- Sidebar -->
     <aside id="sidebar" class="w-64 flex-shrink-0 bg-gray-900 border-r border-gray-800/60 flex flex-col h-screen">
+        <!-- Top: New Chat + Chat History -->
         <div class="p-3 border-b border-gray-800/60">
             <button id="new-chat-btn" class="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold py-2 rounded-lg transition">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 4v16m8-8H4"/></svg>
                 New Chat
             </button>
         </div>
-        <div id="chat-history" class="flex-1 overflow-y-auto p-2 space-y-1"></div>
+        <div id="chat-history" class="flex-1 overflow-y-auto p-2 space-y-1 min-h-0"></div>
+
+        <!-- Bottom: MCP Panel -->
+        <div id="mcp-panel" class="flex flex-col border-t border-gray-800/60" style="max-height:45%;">
+            <div class="flex items-center justify-between px-3 py-2 border-b border-gray-800/40">
+                <div class="flex items-center gap-1.5">
+                    <svg class="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                    <span class="text-[11px] font-semibold uppercase tracking-wider text-gray-300">MCP</span>
+                </div>
+                <label class="flex items-center gap-1.5 cursor-pointer group">
+                    <span class="text-[9px] text-gray-500 group-hover:text-gray-400 transition">Enabled</span>
+                    <div class="relative">
+                        <input id="mcp-toggle" type="checkbox" class="sr-only peer">
+                        <div class="w-7 h-4 bg-gray-700 rounded-full peer-checked:bg-emerald-600 transition-colors"></div>
+                        <div class="absolute top-0.5 left-0.5 w-3 h-3 bg-gray-400 rounded-full peer-checked:translate-x-3 peer-checked:bg-white transition-transform"></div>
+                    </div>
+                </label>
+            </div>
+            <div class="flex-1 overflow-y-auto p-3 space-y-3">
+                <div id="mcp-server-list" class="space-y-2"></div>
+            </div>
+        </div>
     </aside>
 
     <!-- Main app -->
@@ -347,6 +369,166 @@ const MODELS = {
         needsF16: true,
     },
 };
+
+// ─── MCP Client ──────────────────────────────────────────────────────────────
+class McpClient {
+    constructor(serverUrl, name) {
+        this.serverUrl = serverUrl;
+        this.name = name;
+        this.sessionId = null;
+        this.token = null;
+        this.status = "disconnected"; // disconnected | connecting | connected | auth_required | error
+        this.tools = [];
+        this._requestId = 0;
+        this._errorMessage = null;
+        this._lastWwwAuthenticate = null;
+    }
+
+    _headers() {
+        const h = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        };
+        if (this.sessionId) h["Mcp-Session-Id"] = this.sessionId;
+        if (this.token) h["Authorization"] = `Bearer ${this.token}`;
+        return h;
+    }
+
+    async _send(method, params = {}) {
+        const body = JSON.stringify({
+            jsonrpc: "2.0",
+            id: ++this._requestId,
+            method,
+            params,
+        });
+
+        let resp;
+        try {
+            resp = await fetch(this.serverUrl, {
+                method: "POST",
+                headers: this._headers(),
+                body,
+                signal: AbortSignal.timeout(30_000),
+            });
+        } catch (directErr) {
+            const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(this.serverUrl)}`;
+            resp = await fetch(proxyUrl, {
+                method: "POST",
+                headers: this._headers(),
+                body,
+                signal: AbortSignal.timeout(30_000),
+            });
+        }
+
+        if (resp.status === 401) {
+            this.status = "auth_required";
+            this._lastWwwAuthenticate = resp.headers.get("WWW-Authenticate") || "";
+            this._errorMessage = "Authentication required";
+            throw new McpAuthError(this._lastWwwAuthenticate, resp);
+        }
+
+        if (!resp.ok) {
+            throw new Error(`MCP HTTP ${resp.status}: ${resp.statusText}`);
+        }
+
+        const sid = resp.headers.get("Mcp-Session-Id");
+        if (sid) this.sessionId = sid;
+
+        const ct = resp.headers.get("Content-Type") || "";
+        if (ct.includes("text/event-stream")) {
+            return await this._parseSSE(resp);
+        }
+        return await resp.json();
+    }
+
+    async _parseSSE(resp) {
+        const text = await resp.text();
+        const lines = text.split("\n");
+        let lastData = null;
+        for (const line of lines) {
+            if (line.startsWith("data: ")) {
+                lastData = line.slice(6);
+            }
+        }
+        if (lastData) {
+            try { return JSON.parse(lastData); } catch { /* fall through */ }
+        }
+        return { result: {} };
+    }
+
+    async connect() {
+        this.status = "connecting";
+        this._errorMessage = null;
+        try {
+            const resp = await this._send("initialize", {
+                protocolVersion: "2025-03-26",
+                capabilities: {},
+                clientInfo: { name: "rh-agent-webgpu", version: "0.1.0" },
+            });
+
+            if (resp.error) {
+                this.status = "error";
+                this._errorMessage = resp.error.message || "Initialize failed";
+                throw new Error(this._errorMessage);
+            }
+
+            await this._send("notifications/initialized", {});
+            this.status = "connected";
+            return resp.result;
+        } catch (e) {
+            if (!(e instanceof McpAuthError)) {
+                this.status = "error";
+                this._errorMessage = e.message;
+            }
+            throw e;
+        }
+    }
+
+    async listTools() {
+        const resp = await this._send("tools/list", {});
+        if (resp.error) throw new Error(resp.error.message || "tools/list failed");
+        this.tools = resp.result?.tools || [];
+        return this.tools;
+    }
+
+    async callTool(name, args = {}) {
+        const resp = await this._send("tools/call", { name, arguments: args });
+        if (resp.error) return { error: resp.error.message || "Tool call failed" };
+        const content = resp.result?.content || [];
+        const texts = content.filter(c => c.type === "text").map(c => c.text);
+        if (texts.length === 1) {
+            try { return JSON.parse(texts[0]); } catch { return { result: texts[0] }; }
+        }
+        if (texts.length > 1) return { result: texts.join("\n") };
+        return resp.result || {};
+    }
+
+    disconnect() {
+        this.sessionId = null;
+        this.status = "disconnected";
+        this.tools = [];
+        this._errorMessage = null;
+    }
+
+    setToken(token) {
+        this.token = token;
+        sessionStorage.setItem(`mcp-token:${this.serverUrl}`, token);
+    }
+
+    loadToken() {
+        const t = sessionStorage.getItem(`mcp-token:${this.serverUrl}`);
+        if (t) this.token = t;
+        return !!t;
+    }
+}
+
+class McpAuthError extends Error {
+    constructor(wwwAuthenticate, response) {
+        super("MCP authentication required");
+        this.wwwAuthenticate = wwwAuthenticate;
+        this.response = response;
+    }
+}
 
 // ─── Tool Schema (passed to the model) ──────────────────────────────────────
 const TOOLS_SCHEMA = [
@@ -740,6 +922,13 @@ function removeSkill(name) {
     renderSkillsList();
 }
 
+function getMcpToolsSummary() {
+    const mcpSchemas = getMcpToolsSchema();
+    if (mcpSchemas.length === 0) return "";
+    const lines = mcpSchemas.map(s => `- ${s.function.name}: ${s.function.description}`);
+    return "\n## MCP Tools (from connected servers)\n" + lines.join("\n");
+}
+
 function rebuildSystemPrompt() {
     const skills = [...skillsRegistry.values()];
     const skillList = skills
@@ -753,27 +942,25 @@ function rebuildSystemPrompt() {
 - Diagnostic data collection (sos report, must-gather)
 - Support case severity assessment
 
-## How to Use Skills
-When a user asks a domain-specific question that matches one of your available skills, call useSkill directly with the matching skill name. Do NOT call listSkills first — you already have the full list above.
-1. Call useSkill({"name":"<skill-name>"}) to load the skill's instructions.
-2. Read the instructions returned by the tool carefully.
-3. Follow the instructions step by step. If they tell you to call fetchURL or another tool, do so.
-4. After gathering all needed information, compose a complete answer based on the skill's output format.
+## Skills (accessed ONLY via useSkill tool)
+Skills are NOT tools. You CANNOT call a skill name directly. To use a skill you MUST call the useSkill tool:
+  useSkill({"name":"<skill-name>"})
+Then follow the returned instructions step by step.
 
-Only call listSkills if the user explicitly asks "what skills do you have?" or similar.
-
-## Available Skills
+Available skill names for useSkill:
 ${skillList}
 
 ## Tools
-- useSkill: Load a skill's instructions by name.
+- useSkill: Load a skill by name. Example: useSkill({"name":"red-hat-cve-explainer"})
 - listSkills: List all available skills.
 - fetchURL: Fetch content from a URL. Use this for web lookups, API calls, etc.
 - listScripts: List available Python scripts from loaded collections.
 - runScript: Run a Python script in the browser sandbox (Pyodide). Cannot access CLI tools.
+${getMcpToolsSummary()}
 
 ## Important Rules
 - After a tool returns a result, you MUST generate a text response — never leave the response empty.
+- NEVER output a skill name as a tool call. Always wrap it: useSkill({"name":"..."}).
 - Shell/CLI commands (oc, kubectl, curl) cannot run in this environment. Show them as text suggestions instead.
 - Python scripts can be run in browser via runScript. For shell scripts, show as copyable code blocks.
 - Always answer the user's question completely after you have gathered information.`;
@@ -1352,6 +1539,30 @@ Write for a sysadmin who needs to act now.`,
 ];
 
 // ─── Application State ──────────────────────────────────────────────────────
+const MCP_STORAGE_KEY = "rh-agent-mcp-servers";
+const DEFAULT_MCP_SERVERS = [
+    { url: "https://security-mcp.api.redhat.com/mcp", name: "Red Hat Security", enabled: true, builtin: true },
+];
+
+function loadMcpServers() {
+    try {
+        const saved = JSON.parse(localStorage.getItem(MCP_STORAGE_KEY) || "null");
+        if (Array.isArray(saved) && saved.length > 0) {
+            const hasBuiltin = saved.some(s => s.builtin);
+            if (!hasBuiltin) saved.unshift({ ...DEFAULT_MCP_SERVERS[0] });
+            return saved;
+        }
+    } catch { /* fall through */ }
+    return DEFAULT_MCP_SERVERS.map(s => ({ ...s }));
+}
+
+function saveMcpServers() {
+    const serializable = state.mcpServers.map(s => ({
+        url: s.url, name: s.name, enabled: s.enabled, builtin: s.builtin || false,
+    }));
+    localStorage.setItem(MCP_STORAGE_KEY, JSON.stringify(serializable));
+}
+
 const state = {
     generator: null,
     isReady: false,
@@ -1361,7 +1572,16 @@ const state = {
     settings: { maxTokens: 512, maxIterations: 5, temperature: 0, maxContext: 12000, toolLimit: 2500, skillLimit: 2500, fetchLimit: 2000 },
     capabilities: null,
     currentChatId: null,
+    mcpServers: loadMcpServers(),
+    mcpClients: new Map(),
+    mcpTools: new Map(),
+    mcpEnabled: JSON.parse(localStorage.getItem("rh-agent-mcp-enabled") || "true"),
+    mcpDisabledTools: new Set(JSON.parse(localStorage.getItem("rh-agent-mcp-disabled-tools") || "[]")),
 };
+
+function saveMcpDisabledTools() {
+    localStorage.setItem("rh-agent-mcp-disabled-tools", JSON.stringify([...state.mcpDisabledTools]));
+}
 
 // ─── DOM Helpers ─────────────────────────────────────────────────────────────
 const $ = (s) => document.querySelector(s);
@@ -1766,21 +1986,25 @@ function addToolCard(name, args, result) {
 // ─── WebGPU Capability Detection ─────────────────────────────────────────────
 async function detectCapabilities() {
     if (!navigator.gpu) {
-        return { device: "wasm", dtype: "q8", gpu: false, f16: false };
+        return { device: "wasm", dtype: "q8", gpu: false, f16: false, vramMB: 0 };
     }
     try {
         const adapter = await navigator.gpu.requestAdapter();
-        if (!adapter) return { device: "wasm", dtype: "q8", gpu: false, f16: false };
+        if (!adapter) return { device: "wasm", dtype: "q8", gpu: false, f16: false, vramMB: 0 };
         const f16 = adapter.features.has("shader-f16");
-        return { device: "webgpu", dtype: f16 ? "q4f16" : "q4", gpu: true, f16 };
+        const maxBuf = adapter.limits?.maxBufferSize || 0;
+        const maxMem = adapter.limits?.maxStorageBufferBindingSize || 0;
+        const vramMB = Math.round(Math.max(maxBuf, maxMem) / (1024 * 1024));
+        return { device: "webgpu", dtype: f16 ? "q4f16" : "q4", gpu: true, f16, vramMB };
     } catch {
-        return { device: "wasm", dtype: "q8", gpu: false, f16: false };
+        return { device: "wasm", dtype: "q8", gpu: false, f16: false, vramMB: 0 };
     }
 }
 
 function updateGpuBadge(caps) {
+    const vramLabel = caps.vramMB ? ` · ${caps.vramMB >= 1024 ? (caps.vramMB / 1024).toFixed(1) + " GB" : caps.vramMB + " MB"}` : "";
     gpuBadge.textContent = caps.gpu
-        ? `WebGPU${caps.f16 ? " \u00b7 f16" : ""}`
+        ? `WebGPU${caps.f16 ? " · f16" : ""}${vramLabel}`
         : "WASM (CPU)";
     gpuBadge.className = caps.gpu
         ? "text-[10px] font-medium px-2 py-0.5 rounded-full bg-emerald-900/40 text-emerald-400 uppercase tracking-wider"
@@ -1852,6 +2076,7 @@ async function initModel() {
         setStatus(`${modelCfg.name} ready \u2014 ${device} / ${dtype}`);
         appendLog(`Model loaded successfully`, "text-emerald-400");
         setInputEnabled(true);
+        modelSelect.disabled = false;
         initBtn.style.display = "none";
     } catch (err) {
         showProgress(false);
@@ -1864,11 +2089,12 @@ async function initModel() {
 }
 
 // ─── Tool Call Parsing (fallback for models that return raw text) ─────────────
-const KNOWN_TOOLS = new Set([
+const BASE_KNOWN_TOOLS = [
     "getCurrentTime", "changeBackgroundColor", "readPageContent", "querySelector",
     "createNote", "runJavaScript", "fetchURL", "scrollPage", "useSkill", "listSkills",
     "runScript", "listScripts",
-]);
+];
+const KNOWN_TOOLS = new Set(BASE_KNOWN_TOOLS);
 
 function stripToolCallArtifacts(text) {
     if (!text) return text;
@@ -1882,8 +2108,8 @@ function stripToolCallArtifacts(text) {
         const re = new RegExp(`\\b${toolName}\\s*\\(\\s*\\{[\\s\\S]*?\\}\\s*\\)`, "g");
         cleaned = cleaned.replace(re, "");
     }
-    // Remove call:functionName{...} patterns
-    cleaned = cleaned.replace(/call\s*:\s*\w+\s*\{[\s\S]*?\}/g, "");
+    // Remove call:functionName{...} patterns (supports hyphens in names)
+    cleaned = cleaned.replace(/call\s*:\s*[\w-]+\s*\{[\s\S]*?\}/g, "");
     // Collapse multiple blank lines left behind
     cleaned = cleaned.replace(/\n{3,}/g, "\n\n").trim();
     return cleaned;
@@ -1927,24 +2153,34 @@ function parseToolCallsFromText(text) {
     }
     if (calls.length > 0) return calls;
 
+    // Helper: if the model calls a skill name directly, redirect to useSkill
+    const redirectSkill = (name, rawArgs) => {
+        if (KNOWN_TOOLS.has(name)) return tryPush(name, rawArgs);
+        if (skillsRegistry.has(name)) {
+            calls.push(makeTc("useSkill", { name }));
+            return true;
+        }
+        return false;
+    };
+
     // Pattern 2: bare JSON {"name":"functionName","arguments":{...}}
-    const jsonRe = /\{\s*"?name"?\s*:\s*"?(\w+)"?\s*,\s*"?arguments"?\s*:\s*(\{[\s\S]*?\})\s*\}/g;
+    const jsonRe = /\{\s*"?name"?\s*:\s*"?([\w-]+)"?\s*,\s*"?arguments"?\s*:\s*(\{[\s\S]*?\})\s*\}/g;
     while ((m = jsonRe.exec(text)) !== null) {
-        if (KNOWN_TOOLS.has(m[1])) tryPush(m[1], m[2]);
+        redirectSkill(m[1], m[2]);
     }
     if (calls.length > 0) return calls;
 
     // Pattern 3: functionName({"key":"value",...}) or functionName({key:value})
-    const funcRe = /\b(\w+)\s*\(\s*(\{[\s\S]*?\})\s*\)/g;
+    const funcRe = /\b([\w-]+)\s*\(\s*(\{[\s\S]*?\})\s*\)/g;
     while ((m = funcRe.exec(text)) !== null) {
-        if (KNOWN_TOOLS.has(m[1])) tryPush(m[1], m[2]);
+        redirectSkill(m[1], m[2]);
     }
     if (calls.length > 0) return calls;
 
     // Pattern 4: call:functionName{key:value} or call:functionName{"key":"value"}
-    const callRe = /call\s*:\s*(\w+)\s*(\{[\s\S]*?\})/g;
+    const callRe = /call\s*:\s*([\w-]+)\s*(\{[\s\S]*?\})/g;
     while ((m = callRe.exec(text)) !== null) {
-        if (KNOWN_TOOLS.has(m[1])) tryPush(m[1], m[2]);
+        redirectSkill(m[1], m[2]);
     }
     if (calls.length > 0) return calls;
 
@@ -1960,11 +2196,407 @@ function parseToolCallsFromText(text) {
     return calls;
 }
 
+// ─── MCP Tool Bridge ─────────────────────────────────────────────────────────
+function sanitizeJsonSchema(schema) {
+    if (!schema || typeof schema !== "object") return { type: "object", properties: {}, required: [] };
+    const clean = { type: schema.type || "object" };
+    clean.required = Array.isArray(schema.required) ? schema.required : [];
+    const props = schema.properties && typeof schema.properties === "object" ? schema.properties : {};
+    clean.properties = {};
+    for (const [key, val] of Object.entries(props)) {
+        if (!val || typeof val !== "object") continue;
+        clean.properties[key] = {
+            type: val.type || "string",
+            description: val.description || "",
+        };
+        if (Array.isArray(val.enum)) clean.properties[key].enum = val.enum;
+    }
+    return clean;
+}
+
+function getMcpToolsSchema() {
+    const schemas = [];
+    for (const [, tools] of state.mcpTools) {
+        for (const tool of tools) {
+            if (state.mcpDisabledTools.has(tool.name)) continue;
+            schemas.push({
+                type: "function",
+                function: {
+                    name: tool.name,
+                    description: (tool.description || "").slice(0, 120),
+                    parameters: sanitizeJsonSchema(tool.inputSchema),
+                },
+            });
+        }
+    }
+    return schemas.slice(0, 10);
+}
+
+function getAllToolsSchema() {
+    return [...TOOLS_SCHEMA, ...getMcpToolsSchema()];
+}
+
+function getMcpToolServer(toolName) {
+    for (const [serverUrl, tools] of state.mcpTools) {
+        if (tools.some(t => t.name === toolName)) return serverUrl;
+    }
+    return null;
+}
+
+function rebuildKnownTools() {
+    KNOWN_TOOLS.clear();
+    for (const name of BASE_KNOWN_TOOLS) KNOWN_TOOLS.add(name);
+    for (const [, tools] of state.mcpTools) {
+        for (const t of tools) {
+            if (!state.mcpDisabledTools.has(t.name)) KNOWN_TOOLS.add(t.name);
+        }
+    }
+}
+
+async function connectMcpServer(serverEntry) {
+    const client = new McpClient(serverEntry.url, serverEntry.name);
+    client.loadToken();
+    state.mcpClients.set(serverEntry.url, client);
+    let authRequired = false;
+    try {
+        await client.connect();
+    } catch (e) {
+        if (e instanceof McpAuthError) {
+            authRequired = true;
+            appendLog(`MCP ${serverEntry.name}: authentication required`, "text-amber-400");
+        } else {
+            appendLog(`MCP ${serverEntry.name}: ${e.message}`, "text-red-400");
+            renderMcpTab();
+            return;
+        }
+    }
+    // Always attempt tools/list -- many servers allow it without auth
+    try {
+        const tools = await client.listTools();
+        state.mcpTools.set(serverEntry.url, tools);
+        rebuildKnownTools();
+        rebuildSystemPrompt();
+        appendLog(`MCP ${serverEntry.name}: ${tools.length} tools discovered`, "text-emerald-400");
+    } catch {
+        // tools/list also requires auth or failed -- tools stay empty
+    }
+    renderMcpTab();
+}
+
+async function disconnectMcpServer(serverUrl) {
+    const client = state.mcpClients.get(serverUrl);
+    if (client) client.disconnect();
+    state.mcpClients.delete(serverUrl);
+    state.mcpTools.delete(serverUrl);
+    rebuildKnownTools();
+    rebuildSystemPrompt();
+    renderMcpTab();
+}
+
+async function initMcpServers() {
+    if (!state.mcpEnabled) return;
+    for (const server of state.mcpServers) {
+        if (server.enabled) await connectMcpServer(server);
+    }
+}
+
+// ─── OAuth 2.0 Browser Flow (MCP spec: RFC 9728 + RFC 7591) ─────────────────
+
+async function corsFetch(url, opts = {}) {
+    const timeout = opts.signal || AbortSignal.timeout(10_000);
+    // For POST/PUT/PATCH with a body, skip direct attempt -- the server may
+    // consume the request (e.g. redeem an auth code) even though the browser
+    // blocks the response due to missing CORS headers, causing a retry to fail.
+    if (opts.body && opts.method && opts.method !== "GET") {
+        const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
+        return await fetch(proxyUrl, { ...opts, signal: timeout });
+    }
+    try {
+        return await fetch(url, { ...opts, signal: timeout });
+    } catch {
+        const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
+        return await fetch(proxyUrl, { ...opts, signal: timeout });
+    }
+}
+
+// Step 1: Discover Protected Resource Metadata per RFC 9728
+async function discoverResourceMetadata(serverUrl, wwwAuthenticate) {
+    // Try resource_metadata from WWW-Authenticate header first
+    const rmMatch = wwwAuthenticate?.match(/resource_metadata="([^"]+)"/);
+    if (rmMatch) {
+        try {
+            const resp = await corsFetch(rmMatch[1]);
+            if (resp.ok) return await resp.json();
+        } catch { /* fall through */ }
+    }
+
+    // Fall back to well-known URI at the server origin
+    const url = new URL(serverUrl);
+    const wellKnownPaths = [
+        `${url.origin}/.well-known/oauth-protected-resource${url.pathname}`,
+        `${url.origin}/.well-known/oauth-protected-resource`,
+    ];
+    for (const wk of wellKnownPaths) {
+        try {
+            const resp = await corsFetch(wk);
+            if (resp.ok) return await resp.json();
+        } catch { /* try next */ }
+    }
+    return null;
+}
+
+// Step 2: Fetch Authorization Server Metadata per RFC 8414
+async function discoverAuthServerMetadata(authServerUrl) {
+    const wellKnownPaths = [
+        `${authServerUrl}/.well-known/oauth-authorization-server`,
+        `${authServerUrl}/.well-known/openid-configuration`,
+    ];
+    for (const wk of wellKnownPaths) {
+        try {
+            const resp = await corsFetch(wk);
+            if (resp.ok) return await resp.json();
+        } catch { /* try next */ }
+    }
+    return null;
+}
+
+// Step 3: Dynamic Client Registration per RFC 7591
+async function dynamicClientRegister(registrationEndpoint, redirectUri, serverUrl) {
+    const cacheKey = `mcp-dcr:${registrationEndpoint}:${redirectUri}`;
+    const cached = sessionStorage.getItem(cacheKey);
+    if (cached) {
+        try { return JSON.parse(cached); } catch { /* re-register */ }
+    }
+
+    const resp = await corsFetch(registrationEndpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            client_name: "RH-Agent WebGPU",
+            redirect_uris: [redirectUri],
+            grant_types: ["authorization_code"],
+            response_types: ["code"],
+            token_endpoint_auth_method: "none",
+            scope: "openid",
+        }),
+        signal: AbortSignal.timeout(15_000),
+    });
+    if (!resp.ok) throw new Error(`Dynamic client registration failed: HTTP ${resp.status}`);
+    const data = await resp.json();
+    sessionStorage.setItem(cacheKey, JSON.stringify(data));
+    return data;
+}
+
+async function startOAuthFlow(serverUrl) {
+    const client = state.mcpClients.get(serverUrl);
+    if (!client) return;
+
+    try {
+        appendLog(`MCP OAuth: discovering auth configuration...`, "text-amber-400");
+
+        // 1. Get Protected Resource Metadata
+        const prm = await discoverResourceMetadata(serverUrl, client._lastWwwAuthenticate);
+        if (!prm?.authorization_servers?.length) {
+            appendLog(`MCP OAuth: no authorization_servers found in resource metadata`, "text-red-400");
+            return;
+        }
+        const authServerUrl = prm.authorization_servers[0];
+        const resourceScopes = prm.scopes_supported || [];
+        const resource = prm.resource || serverUrl;
+
+        // 2. Get Authorization Server Metadata
+        const asm = await discoverAuthServerMetadata(authServerUrl);
+        if (!asm?.authorization_endpoint || !asm?.token_endpoint) {
+            appendLog(`MCP OAuth: could not discover auth server endpoints at ${authServerUrl}`, "text-red-400");
+            return;
+        }
+
+        const redirectUri = `${window.location.origin}${window.location.pathname}`;
+        let clientId;
+
+        // 3. Dynamic Client Registration if supported
+        if (asm.registration_endpoint) {
+            try {
+                const reg = await dynamicClientRegister(asm.registration_endpoint, redirectUri, serverUrl);
+                clientId = reg.client_id;
+                appendLog(`MCP OAuth: registered client "${clientId}"`, "text-gray-400");
+            } catch (e) {
+                appendLog(`MCP OAuth: DCR failed (${e.message}), trying without`, "text-amber-400");
+            }
+        }
+
+        if (!clientId) {
+            appendLog(`MCP OAuth: no registration endpoint and no client_id available`, "text-red-400");
+            return;
+        }
+
+        // 4. PKCE Authorization Code flow
+        const codeVerifier = generateCodeVerifier();
+        const codeChallenge = await generateCodeChallenge(codeVerifier);
+        const oauthState = crypto.randomUUID();
+        const scope = resourceScopes.length > 0 ? resourceScopes.join(" ") : "openid";
+
+        const params = new URLSearchParams({
+            response_type: "code",
+            client_id: clientId,
+            redirect_uri: redirectUri,
+            scope,
+            state: oauthState,
+            code_challenge: codeChallenge,
+            code_challenge_method: "S256",
+            resource,
+        });
+
+        sessionStorage.setItem("mcp-oauth-state", JSON.stringify({
+            state: oauthState,
+            serverUrl,
+            tokenEndpoint: asm.token_endpoint,
+            codeVerifier,
+            clientId,
+            redirectUri,
+            resource,
+        }));
+
+        const popup = window.open(
+            `${asm.authorization_endpoint}?${params}`,
+            "mcp-oauth",
+            "width=600,height=700,popup=yes"
+        );
+
+        if (!popup || popup.closed) {
+            appendLog("OAuth popup blocked. Allow popups for this site.", "text-red-400");
+            return;
+        }
+
+        appendLog(`MCP OAuth: waiting for login...`, "text-amber-400");
+
+        const pollInterval = setInterval(() => {
+            try {
+                // Check if popup wrote the code before it closed or while still open
+                const pendingCode = localStorage.getItem("mcp-oauth-code");
+                if (pendingCode) {
+                    localStorage.removeItem("mcp-oauth-code");
+                    clearInterval(pollInterval);
+                    try { popup.close(); } catch { /* may already be closed */ }
+                    const data = JSON.parse(pendingCode);
+                    appendLog(`MCP OAuth: code received, exchanging for token...`, "text-amber-400");
+                    exchangeCodeForToken(data.code, data.tokenEndpoint, data.codeVerifier, data.clientId, data.redirectUri, data.serverUrl, data.resource);
+                    return;
+                }
+                if (popup.closed) {
+                    clearInterval(pollInterval);
+                    appendLog(`MCP OAuth: popup closed without completing login`, "text-gray-500");
+                    return;
+                }
+            } catch {
+                /* keep polling */
+            }
+        }, 500);
+
+    } catch (e) {
+        appendLog(`OAuth error: ${e.message}`, "text-red-400");
+    }
+}
+
+function generateCodeVerifier() {
+    const arr = new Uint8Array(32);
+    crypto.getRandomValues(arr);
+    return btoa(String.fromCharCode(...arr))
+        .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+async function generateCodeChallenge(verifier) {
+    const data = new TextEncoder().encode(verifier);
+    const hash = await crypto.subtle.digest("SHA-256", data);
+    return btoa(String.fromCharCode(...new Uint8Array(hash)))
+        .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+async function exchangeCodeForToken(code, tokenEndpoint, codeVerifier, clientId, redirectUri, serverUrl, resource) {
+    try {
+        const body = {
+            grant_type: "authorization_code",
+            code,
+            client_id: clientId,
+            redirect_uri: redirectUri,
+            code_verifier: codeVerifier,
+        };
+        if (resource) body.resource = resource;
+
+        const resp = await corsFetch(tokenEndpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams(body),
+        });
+        if (!resp.ok) {
+            const errText = await resp.text().catch(() => "");
+            throw new Error(`Token exchange failed: HTTP ${resp.status} ${errText.slice(0, 200)}`);
+        }
+        const tokens = await resp.json();
+        finishOAuthFlow({ serverUrl, accessToken: tokens.access_token });
+    } catch (e) {
+        appendLog(`OAuth token exchange failed: ${e.message}`, "text-red-400");
+    }
+}
+
+async function finishOAuthFlow({ serverUrl, accessToken }) {
+    const client = state.mcpClients.get(serverUrl);
+    if (!client) return;
+    client.setToken(accessToken);
+    appendLog(`MCP OAuth: token acquired, reconnecting...`, "text-emerald-400");
+    const server = state.mcpServers.find(s => s.url === serverUrl);
+    if (server) await connectMcpServer(server);
+}
+
+function checkOAuthRedirect() {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code");
+    const returnedState = params.get("state");
+    if (!code || !returnedState) return;
+
+    const stored = sessionStorage.getItem("mcp-oauth-state");
+    if (!stored) return;
+    const oauthData = JSON.parse(stored);
+
+    if (returnedState !== oauthData.state) return;
+
+    window.history.replaceState({}, "", window.location.pathname);
+
+    if (window.opener && !window.opener.closed) {
+        // Running inside the OAuth popup -- hand the code to parent via localStorage
+        localStorage.setItem("mcp-oauth-code", JSON.stringify({
+            code,
+            serverUrl: oauthData.serverUrl,
+            tokenEndpoint: oauthData.tokenEndpoint,
+            codeVerifier: oauthData.codeVerifier,
+            clientId: oauthData.clientId,
+            redirectUri: oauthData.redirectUri,
+            resource: oauthData.resource,
+        }));
+        sessionStorage.removeItem("mcp-oauth-state");
+        window.close();
+        return;
+    }
+
+    // Redirect landed in the main window (popup was blocked or user navigated)
+    sessionStorage.removeItem("mcp-oauth-state");
+    exchangeCodeForToken(code, oauthData.tokenEndpoint, oauthData.codeVerifier, oauthData.clientId, oauthData.redirectUri, oauthData.serverUrl, oauthData.resource);
+}
+
 // ─── Execute a Single Tool Call ──────────────────────────────────────────────
 async function executeTool(call) {
     const name = call.function.name;
     const rawArgs = call.function.arguments;
     const args = typeof rawArgs === "string" ? JSON.parse(rawArgs) : (rawArgs ?? {});
+
+    const mcpServerUrl = getMcpToolServer(name);
+    if (mcpServerUrl) {
+        const client = state.mcpClients.get(mcpServerUrl);
+        if (!client || client.status !== "connected") {
+            return { error: `MCP server not connected for tool: ${name}` };
+        }
+        return await client.callTool(name, args);
+    }
 
     if (!TOOLS_IMPL[name]) return { error: `Unknown tool: ${name}` };
     return await Promise.resolve(TOOLS_IMPL[name](args));
@@ -2054,7 +2686,7 @@ async function runAgent(userMessage) {
             const genOpts = {
                 max_new_tokens: state.settings.maxTokens,
                 do_sample: state.settings.temperature > 0,
-                tools: TOOLS_SCHEMA,
+                tools: getAllToolsSchema(),
             };
             if (state.settings.temperature > 0) {
                 genOpts.temperature = state.settings.temperature;
@@ -2262,8 +2894,151 @@ async function runAgent(userMessage) {
     saveCurrentChat();
 }
 
+// ─── MCP Panel Rendering ─────────────────────────────────────────────────────
+function renderMcpTab() {
+    const container = document.getElementById("mcp-server-list");
+    const toggle = document.getElementById("mcp-toggle");
+    if (!container || !toggle) return;
+    toggle.checked = state.mcpEnabled;
+
+    container.innerHTML = "";
+    let totalMcpTools = 0;
+
+    for (const server of state.mcpServers) {
+        const client = state.mcpClients.get(server.url);
+        const status = client?.status || "disconnected";
+        const toolCount = state.mcpTools.get(server.url)?.length || 0;
+        totalMcpTools += toolCount;
+
+        const statusDot = status === "connected" ? "bg-emerald-500"
+            : status === "connecting" ? "bg-amber-400 animate-pulse"
+            : status === "auth_required" ? "bg-amber-500"
+            : status === "error" ? "bg-red-500"
+            : "bg-gray-600";
+
+        const statusLabel = status === "connected" ? `Connected (${toolCount} tools)`
+            : status === "connecting" ? "Connecting..."
+            : status === "auth_required" ? "Login required"
+            : status === "error" ? (client?._errorMessage || "Error")
+            : "Disconnected";
+
+        const tools = state.mcpTools.get(server.url) || [];
+
+        const enabledCount = tools.filter(t => !state.mcpDisabledTools.has(t.name)).length;
+
+        let toolsHtml = "";
+        if (tools.length > 0) {
+            toolsHtml = `
+                <div class="mt-2 border-t border-gray-700/50 pt-1.5">
+                    <div class="text-[9px] uppercase tracking-wider text-gray-500 mb-1">Tools (${enabledCount}/${tools.length})</div>
+                    <div class="space-y-0.5 max-h-40 overflow-y-auto pr-1">${tools.map(t => {
+                        const enabled = !state.mcpDisabledTools.has(t.name);
+                        return `
+                        <label class="flex items-start gap-1.5 py-0.5 cursor-pointer group" title="${escHtml(t.description || t.name)}">
+                            <input type="checkbox" class="mcp-tool-toggle accent-emerald-500 w-3 h-3 mt-0.5 flex-shrink-0 cursor-pointer"
+                                data-server="${escHtml(server.url)}" data-tool="${escHtml(t.name)}" ${enabled ? "checked" : ""}>
+                            <div class="min-w-0 ${enabled ? "" : "opacity-40"}">
+                                <div class="text-[10px] text-gray-200 font-medium truncate">${escHtml(t.name)}</div>
+                                ${t.description ? `<div class="text-[9px] text-gray-500 line-clamp-1">${escHtml(t.description.slice(0, 120))}</div>` : ""}
+                            </div>
+                        </label>`;
+                    }).join("")}
+                    </div>
+                </div>`;
+        }
+
+        const card = document.createElement("div");
+        card.className = "bg-gray-800/60 rounded-lg p-2.5 space-y-1.5";
+        card.innerHTML = `
+            <div class="flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full flex-shrink-0 ${statusDot}"></span>
+                <span class="text-[11px] font-medium text-gray-200 truncate flex-1">${escHtml(server.name)}</span>
+                ${!server.builtin ? `<button class="mcp-remove text-gray-600 hover:text-red-400 text-sm leading-none" data-url="${escHtml(server.url)}">&times;</button>` : ""}
+            </div>
+            <div class="text-[9px] text-gray-500 truncate">${escHtml(server.url)}</div>
+            <div class="text-[9px] ${status === "error" ? "text-red-400" : "text-gray-500"}">${escHtml(statusLabel)}</div>
+            <div class="flex gap-1 mt-1">
+                ${status === "connected"
+                    ? `<button class="mcp-disconnect text-[9px] px-2 py-0.5 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 transition" data-url="${escHtml(server.url)}">Disconnect</button>`
+                    : `<button class="mcp-connect text-[9px] px-2 py-0.5 rounded bg-emerald-700 text-white hover:bg-emerald-600 transition" data-url="${escHtml(server.url)}" ${!state.mcpEnabled ? "disabled" : ""}>Connect</button>`
+                }
+                ${status === "auth_required"
+                    ? `<button class="mcp-login text-[9px] px-2 py-0.5 rounded bg-amber-600 text-white hover:bg-amber-500 transition" data-url="${escHtml(server.url)}">Login</button>`
+                    : ""
+                }
+            </div>
+            ${toolsHtml}
+        `;
+        container.appendChild(card);
+    }
+
+    container.querySelectorAll(".mcp-connect").forEach(btn => {
+        btn.addEventListener("click", () => {
+            const url = btn.dataset.url;
+            const server = state.mcpServers.find(s => s.url === url);
+            if (server) connectMcpServer(server);
+        });
+    });
+    container.querySelectorAll(".mcp-disconnect").forEach(btn => {
+        btn.addEventListener("click", () => disconnectMcpServer(btn.dataset.url));
+    });
+    container.querySelectorAll(".mcp-login").forEach(btn => {
+        btn.addEventListener("click", () => startOAuthFlow(btn.dataset.url));
+    });
+    container.querySelectorAll(".mcp-remove").forEach(btn => {
+        btn.addEventListener("click", () => {
+            const url = btn.dataset.url;
+            disconnectMcpServer(url);
+            state.mcpServers = state.mcpServers.filter(s => s.url !== url);
+            saveMcpServers();
+            renderMcpTab();
+        });
+    });
+    container.querySelectorAll(".mcp-tool-toggle").forEach(cb => {
+        cb.addEventListener("change", () => {
+            const toolName = cb.dataset.tool;
+            if (cb.checked) {
+                state.mcpDisabledTools.delete(toolName);
+            } else {
+                state.mcpDisabledTools.add(toolName);
+            }
+            saveMcpDisabledTools();
+            rebuildKnownTools();
+            rebuildSystemPrompt();
+            renderMcpTab();
+        });
+    });
+
+}
+
 // ─── Event Handlers ──────────────────────────────────────────────────────────
 initBtn.addEventListener("click", initModel);
+
+// Skills panel
+skillsBtn.addEventListener("click", () => {
+    skillsPanel.classList.remove("hidden");
+    skillsBack.classList.remove("hidden");
+    renderSkillsList();
+});
+function closeSkillsPanel() {
+    skillsPanel.classList.add("hidden");
+    skillsBack.classList.add("hidden");
+}
+closeSkills.addEventListener("click", closeSkillsPanel);
+skillsBack.addEventListener("click", closeSkillsPanel);
+
+// MCP toggle
+document.getElementById("mcp-toggle")?.addEventListener("change", (e) => {
+    state.mcpEnabled = e.target.checked;
+    localStorage.setItem("rh-agent-mcp-enabled", JSON.stringify(state.mcpEnabled));
+    if (!state.mcpEnabled) {
+        for (const url of [...state.mcpClients.keys()]) disconnectMcpServer(url);
+    }
+    renderMcpTab();
+});
+
+// MCP add server
+
 
 inputForm.addEventListener("submit", (e) => {
     e.preventDefault();
@@ -2295,19 +3070,6 @@ function closeSettingsPanel() {
 }
 closeSettings.addEventListener("click", closeSettingsPanel);
 settingsBack.addEventListener("click", closeSettingsPanel);
-
-// Skills panel
-skillsBtn.addEventListener("click", () => {
-    skillsPanel.classList.remove("hidden");
-    skillsBack.classList.remove("hidden");
-    renderSkillsList();
-});
-function closeSkillsPanel() {
-    skillsPanel.classList.add("hidden");
-    skillsBack.classList.add("hidden");
-}
-closeSkills.addEventListener("click", closeSkillsPanel);
-skillsBack.addEventListener("click", closeSkillsPanel);
 
 // Fetch skill from URL
 $("#fetch-skill-btn").addEventListener("click", () => {
@@ -2416,12 +3178,17 @@ modelSelect.addEventListener("change", () => {
 
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
 (async () => {
+    checkOAuthRedirect();
+
     const caps = await detectCapabilities();
     updateGpuBadge(caps);
 
     BUNDLED_SKILLS.forEach(md => registerSkill(md, { builtin: true }));
     state.currentChatId = generateId();
     renderChatHistory();
+    renderMcpTab();
+
+    await initMcpServers();
 })();
 </script>
 </body>

@@ -2,9 +2,63 @@
 
 ![rh-agent](rh-agent.png)
 
-AI assistant for the Red Hat ecosystem -- a Node.js CLI that embeds the [Pi coding agent](https://pi.dev) runtime with agentic skills for CVE analysis, lifecycle management, diagnostics, and support case guidance.
+AI assistant for the Red Hat ecosystem -- available as a **Node.js CLI** (container-based) and a **browser-based WebGPU agent** (`index.html`). Both interfaces embed agentic skills for CVE analysis, lifecycle management, diagnostics, and support case guidance.
 
 > **Disclaimer:** This is a personal experimental project and is **not** a Red Hat product or service. It is not affiliated with, endorsed by, or supported by Red Hat, Inc. The project uses publicly accessible Red Hat agentic skill collections and MCP servers to retrieve Red Hat product and service information. Red Hat and related product names are trademarks of Red Hat, Inc.
+
+---
+
+## WebGPU Browser Agent (`index.html`)
+
+A fully client-side AI agent that runs entirely in the browser via WebGPU. No server, no API keys, complete privacy.
+
+### Features
+
+- **Local LLM inference** via WebGPU using [Hugging Face transformers.js](https://huggingface.co/docs/transformers.js/)
+- **Multiple model support** -- switch between models at any time via the dropdown:
+  - Gemma 4 E2B 2B (~1.5 GB, recommended for most GPUs)
+  - Gemma 4 E4B 8B (~3 GB, requires 8GB+ VRAM)
+  - Qwen3 4B (~2.4 GB, requires 8GB+ VRAM)
+- **GPU detection** -- auto-detects WebGPU capabilities, f16 support, and estimated VRAM; falls back to WASM (CPU) if no GPU is available
+- **Red Hat Security MCP integration** -- connects to the [Red Hat Security MCP server](https://security-mcp.api.redhat.com/mcp) for direct access to CVE and advisory data
+- **Agentic tool use** -- built-in tools (fetchURL, querySelector, runJavaScript, createNote, etc.) plus MCP tools, with multi-step reasoning loops
+- **Skills system** -- bundled Red Hat skills (CVE Explainer, Diagnostics, Lifecycle, Support Severity) loaded on demand via the `useSkill` tool
+- **Chat history** -- persistent chat sessions stored in `localStorage`
+- **Streaming output** -- real-time token streaming with thinking indicators
+
+### MCP (Model Context Protocol) Integration
+
+The browser agent includes a built-in MCP client panel in the left sidebar with:
+
+- **Red Hat Security MCP server** pre-configured and auto-connecting on load
+- **Tool discovery** -- automatically lists available MCP tools (e.g. `get_cve_by_id`, `get_cves_for_package`)
+- **Per-tool enable/disable** -- checkbox toggles for each discovered tool, persisted across reloads
+- **OAuth 2.0 (PKCE)** authentication flow with dynamic client registration for servers that require login
+- **MCP global toggle** -- enable/disable all MCP servers with a single switch
+
+MCP tools are seamlessly bridged into the agent's tool-calling loop. The model can call MCP tools alongside built-in tools in multi-step reasoning.
+
+### Running the Browser Agent
+
+Serve `index.html` with any static file server:
+
+```bash
+python3 -m http.server 8000
+# Open http://localhost:8000
+```
+
+Or deploy to GitHub Pages -- it's a single self-contained HTML file with no build step.
+
+### Security & Privacy (Browser)
+
+- All inference runs **locally in your browser** via WebGPU -- no data leaves your machine
+- Tokens from MCP OAuth are stored in the browser's `localStorage` (per-origin, per-device)
+- OAuth uses the **PKCE flow** designed for public clients -- no client secrets
+- A CORS proxy (`corsproxy.io`) is used for OAuth discovery/token exchange with Red Hat's auth server (which lacks CORS headers). Self-host a proxy for production use.
+
+---
+
+## CLI Agent (Container)
 
 ## Quick Install (Container)
 
