@@ -754,11 +754,13 @@ function rebuildSystemPrompt() {
 - Support case severity assessment
 
 ## How to Use Skills
-When a user asks a domain-specific question that matches one of your available skills, follow this multi-step process:
+When a user asks a domain-specific question that matches one of your available skills, call useSkill directly with the matching skill name. Do NOT call listSkills first — you already have the full list above.
 1. Call useSkill({"name":"<skill-name>"}) to load the skill's instructions.
 2. Read the instructions returned by the tool carefully.
 3. Follow the instructions step by step. If they tell you to call fetchURL or another tool, do so.
 4. After gathering all needed information, compose a complete answer based on the skill's output format.
+
+Only call listSkills if the user explicitly asks "what skills do you have?" or similar.
 
 ## Available Skills
 ${skillList}
@@ -2126,14 +2128,11 @@ async function runAgent(userMessage) {
                 }
 
                 // Self-explanatory tools: render result directly without another generation pass
-                const DIRECT_DISPLAY_TOOLS = new Set(["listSkills", "listScripts", "getCurrentTime"]);
+                const DIRECT_DISPLAY_TOOLS = new Set(["listScripts", "getCurrentTime"]);
                 if (results.length === 1 && DIRECT_DISPLAY_TOOLS.has(results[0].name)) {
                     const { name, result } = results[0];
                     let formatted;
-                    if (name === "listSkills") {
-                        const skills = Array.isArray(result) ? result : [];
-                        formatted = "## Available Skills\n\n" + skills.map(s => `- **${s.name}**: ${s.description}`).join("\n");
-                    } else if (name === "listScripts") {
+                    if (name === "listScripts") {
                         const scripts = Array.isArray(result) ? result : [];
                         formatted = "## Available Scripts\n\n" + (scripts.length ? scripts.map(s => `- \`${s.key}\` (${s.language}) — ${s.module}`).join("\n") : "No scripts loaded.");
                     } else if (name === "getCurrentTime") {
