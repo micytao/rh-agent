@@ -685,14 +685,37 @@ function parseSkillMd(raw) {
     const fm = raw.match(/^---\s*\n([\s\S]*?)\n---\s*\n([\s\S]*)$/);
     if (!fm) return { name: "unknown", description: "", body: raw, raw };
     const meta = {};
-    for (const line of fm[1].split("\n")) {
+    const lines = fm[1].split("\n");
+    let currentKey = null;
+    let currentVal = "";
+
+    for (const line of lines) {
+        // Indented continuation line (multiline value)
+        if (currentKey && (line.startsWith("  ") || line.startsWith("\t"))) {
+            currentVal += " " + line.trim();
+            continue;
+        }
+        // Save previous key
+        if (currentKey) {
+            meta[currentKey] = currentVal.trim();
+            currentKey = null;
+            currentVal = "";
+        }
         const idx = line.indexOf(":");
         if (idx > 0) {
             const key = line.slice(0, idx).trim();
-            const val = line.slice(idx + 1).trim().replace(/^["']|["']$/g, "");
-            meta[key] = val;
+            let val = line.slice(idx + 1).trim().replace(/^["']|["']$/g, "");
+            if (val === "|" || val === ">") {
+                // Multiline scalar — collect subsequent indented lines
+                currentKey = key;
+                currentVal = "";
+            } else {
+                meta[key] = val;
+            }
         }
     }
+    if (currentKey) meta[currentKey] = currentVal.trim();
+
     return {
         name: meta.name || "unknown",
         description: meta.description || "",
