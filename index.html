@@ -111,9 +111,9 @@
         </div>
         <div class="flex items-center gap-2">
             <select id="model-select" class="bg-gray-900 text-xs text-gray-300 rounded-lg px-3 py-1.5 border border-gray-700/60 focus:border-emerald-500 focus:outline-none cursor-pointer">
-                <option value="gemma-4-e4b" selected>Gemma 4 E4B 8B (~3 GB, 8GB+ VRAM)</option>
+                <option value="gemma-4-e2b" selected>Gemma 4 E2B 2B (~1.5 GB)</option>
+                <option value="gemma-4-e4b">Gemma 4 E4B 8B (~3 GB, 8GB+ VRAM)</option>
                 <option value="qwen3-4b">Qwen3 4B (~2.4 GB, 8GB+ VRAM)</option>
-                <option value="gemma-4-e2b">Gemma 4 E2B 2B (~1.5 GB)</option>
             </select>
             <button id="skills-btn" class="relative w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition" title="Skills">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
@@ -611,17 +611,14 @@ const TOOLS_IMPL = {
                             cvss3_vector: obj.cvss3?.cvss3_scoring_vector,
                             cwe: obj.cwe,
                             bugzilla: obj.bugzilla?.description,
-                            details: (obj.details || []).map(d => d.slice(0, 500)),
-                            statement: obj.statement,
-                            mitigation: obj.mitigation?.value?.slice(0, 500),
-                            affected_products: (obj.affected_release || []).slice(0, 8).map(r => ({
+                            details: (obj.details || []).map(d => d.slice(0, 300)).slice(0, 2),
+                            statement: obj.statement?.slice(0, 300),
+                            mitigation: obj.mitigation?.value?.slice(0, 300),
+                            affected_products: (obj.affected_release || []).slice(0, 4).map(r => ({
                                 product: r.product_name,
                                 advisory: r.advisory,
-                                package: r.package,
                             })),
                             total_affected: (obj.affected_release || []).length,
-                            package_state: obj.package_state,
-                            references: obj.references,
                         };
                         return { success: true, status: r.status, json: summary };
                     }
