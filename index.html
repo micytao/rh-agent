@@ -1,0 +1,2388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://cdn.tailwindcss.com 'unsafe-inline' 'unsafe-eval' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; connect-src *; img-src 'self' data:;">
+    <meta property="og:title" content="WebGPU RH-Agent">
+    <meta property="og:description" content="AI agent running entirely in your browser via WebGPU. No server, no API keys, complete privacy.">
+    <meta property="og:type" content="website">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+    <title>WebGPU RH-Agent</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #4b5563; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes pulse-dot { 0%, 80%, 100% { opacity: 0.3; } 40% { opacity: 1; } }
+        .animate-fade-in { animation: fadeIn 0.3s ease-out; }
+        .thinking-dot { animation: pulse-dot 1.4s ease-in-out infinite; }
+        .thinking-dot:nth-child(2) { animation-delay: 0.2s; }
+        .thinking-dot:nth-child(3) { animation-delay: 0.4s; }
+        input[type="range"] {
+            -webkit-appearance: none; appearance: none; height: 4px;
+            background: #374151; border-radius: 2px; outline: none;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 16px; height: 16px;
+            background: #10b981; border-radius: 50%; cursor: pointer;
+        }
+        /* Markdown rendering inside assistant bubbles */
+        .md-content h1 { font-size: 1.25rem; font-weight: 700; margin: 0.75rem 0 0.4rem; color: #f3f4f6; }
+        .md-content h2 { font-size: 1.1rem; font-weight: 700; margin: 0.6rem 0 0.3rem; color: #f3f4f6; }
+        .md-content h3 { font-size: 1rem; font-weight: 600; margin: 0.5rem 0 0.25rem; color: #e5e7eb; }
+        .md-content p { margin: 0.35rem 0; }
+        .md-content ul, .md-content ol { margin: 0.3rem 0 0.3rem 1.25rem; }
+        .md-content ul { list-style: disc; }
+        .md-content ol { list-style: decimal; }
+        .md-content li { margin: 0.15rem 0; }
+        .md-content strong { color: #f9fafb; font-weight: 600; }
+        .md-content em { color: #d1d5db; font-style: italic; }
+        .md-content code { background: rgba(0,0,0,0.35); padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.85em; color: #a5f3fc; }
+        .md-content pre { background: rgba(0,0,0,0.4); padding: 0.6rem 0.75rem; border-radius: 6px; overflow-x: auto; margin: 0.4rem 0; }
+        .md-content pre code { background: none; padding: 0; color: #d1d5db; }
+        .md-content a { color: #6ee7b7; text-decoration: underline; }
+        .md-content blockquote { border-left: 3px solid #4b5563; padding-left: 0.75rem; margin: 0.4rem 0; color: #9ca3af; }
+        .md-content hr { border: none; border-top: 1px solid #374151; margin: 0.5rem 0; }
+        .md-content > *:first-child { margin-top: 0; }
+        .md-content > *:last-child { margin-bottom: 0; }
+        /* Sidebar */
+        #sidebar { transition: transform 0.25s ease; }
+        #sidebar.collapsed { transform: translateX(-100%); }
+        #sidebar-overlay { transition: opacity 0.25s ease; }
+        .chat-item { transition: background-color 0.15s; }
+        .chat-item:hover .chat-delete { opacity: 1; }
+        .chat-delete { opacity: 0; transition: opacity 0.15s; }
+        .chat-item.active { background-color: rgba(16, 185, 129, 0.12); border-color: rgba(16, 185, 129, 0.3); }
+        @media (max-width: 767px) {
+            #sidebar { position: fixed; inset: 0; z-index: 45; width: 280px; transform: translateX(-100%); }
+            #sidebar.open { transform: translateX(0); }
+            #sidebar-overlay.open { display: block; }
+            #hamburger-btn { display: flex !important; }
+        }
+        @media (min-width: 768px) {
+            #sidebar-overlay { display: none !important; }
+            #hamburger-btn { display: none !important; }
+        }
+    </style>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen">
+<noscript>
+    <div style="text-align:center;padding:3rem;color:#d1d5db;font-family:system-ui,sans-serif;">
+        <h1 style="font-size:1.5rem;margin-bottom:1rem;">WebGPU RH-Agent</h1>
+        <p>This application requires JavaScript and a WebGPU-capable browser (Chrome 113+, Edge 113+).</p>
+    </div>
+</noscript>
+
+<!-- Sidebar overlay (mobile) -->
+<div id="sidebar-overlay" class="hidden fixed inset-0 bg-black/50 z-40"></div>
+
+<!-- Layout wrapper -->
+<div id="layout" class="flex h-screen w-full">
+
+    <!-- Sidebar -->
+    <aside id="sidebar" class="w-64 flex-shrink-0 bg-gray-900 border-r border-gray-800/60 flex flex-col h-screen">
+        <div class="p-3 border-b border-gray-800/60">
+            <button id="new-chat-btn" class="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold py-2 rounded-lg transition">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 4v16m8-8H4"/></svg>
+                New Chat
+            </button>
+        </div>
+        <div id="chat-history" class="flex-1 overflow-y-auto p-2 space-y-1"></div>
+    </aside>
+
+    <!-- Main app -->
+    <div id="app" class="flex flex-col flex-1 min-w-0 h-screen">
+
+    <!-- Header -->
+    <header class="flex items-center justify-between px-4 py-3 border-b border-gray-800/60">
+        <div class="flex items-center gap-3">
+            <button id="hamburger-btn" class="w-8 h-8 items-center justify-center rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition hidden" title="Menu">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+            </button>
+            <h1 class="text-lg font-bold tracking-tight">
+                <span class="text-emerald-400">&#9889;</span> WebGPU RH-Agent
+            </h1>
+            <span id="gpu-badge" class="text-[10px] font-medium px-2 py-0.5 rounded-full bg-gray-800 text-gray-500 uppercase tracking-wider">
+                detecting&hellip;
+            </span>
+        </div>
+        <div class="flex items-center gap-2">
+            <select id="model-select" class="bg-gray-900 text-xs text-gray-300 rounded-lg px-3 py-1.5 border border-gray-700/60 focus:border-emerald-500 focus:outline-none cursor-pointer">
+                <option value="gemma-4-e4b" selected>Gemma 4 E4B 8B (~3 GB, 8GB+ VRAM)</option>
+                <option value="qwen3-4b">Qwen3 4B (~2.4 GB, 8GB+ VRAM)</option>
+                <option value="gemma-4-e2b">Gemma 4 E2B 2B (~1.5 GB)</option>
+            </select>
+            <button id="skills-btn" class="relative w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition" title="Skills">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
+                <span id="skills-count" class="absolute -top-1 -right-1 bg-emerald-600 text-white text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center">0</span>
+            </button>
+            <button id="settings-btn" class="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition" title="Settings">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
+            </button>
+        </div>
+    </header>
+
+    <!-- Chat area -->
+    <main id="chat" class="flex-1 overflow-y-auto px-4 py-6 space-y-4">
+        <div id="welcome" class="text-center py-16 select-none">
+            <div class="text-5xl mb-5">&#9889;</div>
+            <h2 class="text-xl font-semibold text-gray-200 mb-2">WebGPU RH-Agent</h2>
+            <p class="text-gray-400 text-sm max-w-md mx-auto leading-relaxed mb-8">
+                AI agent running entirely in your browser via WebGPU.
+                No server, no API keys, complete privacy.
+            </p>
+            <button id="init-btn" class="bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-semibold px-8 py-2.5 rounded-lg transition shadow-lg shadow-emerald-900/30 mb-10">
+                Initialize Agent
+            </button>
+            <div class="max-w-lg mx-auto text-left bg-gray-900/60 border border-gray-800/60 rounded-xl px-6 py-5 space-y-3">
+                <h3 class="text-sm font-semibold text-gray-300 uppercase tracking-wider">About this experiment</h3>
+                <p class="text-gray-300 text-xs leading-relaxed">
+                    An experiment to prove the formula:
+                    <span class="text-emerald-400 font-medium">Minimalist Harness + Security Hardening + Open Small Models + Enterprise Skills = Enterprise AI</span>.
+                </p>
+                <p class="text-gray-300 text-xs leading-relaxed">
+                    Built on <a href="https://github.com/micytao/rh-agent" target="_blank" rel="noopener" class="text-emerald-400 hover:text-emerald-300 underline">rh-agent</a>,
+                    a rootless container that pairs open-weight models with curated enterprise skills.
+                    This project pushes the barrier further &mdash; everything runs <span class="text-gray-200 font-medium">entirely in the browser</span> via WebGPU. No server, no container runtime, no API keys.
+                </p>
+            </div>
+        </div>
+    </main>
+
+    <!-- Log panel (collapsible) -->
+    <div id="log-panel" class="hidden border-t border-gray-800/40">
+        <div id="log-content" class="h-32 overflow-y-auto bg-black/40 px-4 py-2 font-mono text-[11px] text-gray-500 leading-relaxed"></div>
+    </div>
+
+    <!-- Status bar -->
+    <div id="status-bar" class="px-4 py-2 border-t border-gray-800/40 flex items-center gap-3 min-h-[36px]">
+        <div id="progress-container" class="hidden flex-1 flex items-center gap-3">
+            <div class="flex-1 bg-gray-800 rounded-full h-1.5 overflow-hidden">
+                <div id="progress-bar" class="bg-emerald-500 h-full rounded-full transition-all duration-300" style="width:0%"></div>
+            </div>
+            <span id="progress-text" class="text-[11px] text-gray-300 whitespace-nowrap tabular-nums w-10 text-right">0%</span>
+        </div>
+        <span id="status-text" class="text-[11px] text-gray-400 truncate" aria-live="polite" role="status">Click &ldquo;Initialize Agent&rdquo; to load a model</span>
+        <button id="log-toggle" class="text-[10px] text-gray-600 hover:text-gray-400 transition uppercase tracking-wider whitespace-nowrap" title="Toggle log panel">
+            &#9660; Logs
+        </button>
+    </div>
+
+    <!-- Input bar -->
+    <footer class="p-4 border-t border-gray-800/60">
+        <form id="input-form" class="flex gap-2">
+            <input id="user-input" type="text" autocomplete="off"
+                placeholder="Ask the agent to do something&hellip;" disabled
+                class="flex-1 bg-gray-900 text-gray-100 placeholder-gray-600 border border-gray-700/60 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-emerald-500 disabled:opacity-40 transition">
+            <button id="stop-btn" type="button" aria-label="Stop generation"
+                class="hidden bg-red-600 hover:bg-red-500 text-white text-sm font-semibold px-4 py-2.5 rounded-lg transition">
+                Stop
+            </button>
+            <button id="send-btn" type="submit" disabled aria-label="Send message"
+                class="bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-800 disabled:text-gray-600 text-white text-sm font-semibold px-6 py-2.5 rounded-lg transition disabled:cursor-not-allowed">
+                Send
+            </button>
+        </form>
+    </footer>
+    </div><!-- end #app -->
+</div><!-- end #layout -->
+
+<!-- Settings panel -->
+<div id="settings-backdrop" class="hidden fixed inset-0 bg-black/40 z-40"></div>
+<div id="settings-panel" class="hidden fixed inset-y-0 right-0 w-80 bg-gray-900 border-l border-gray-800 shadow-2xl z-50 flex flex-col">
+    <div class="flex justify-between items-center p-5 border-b border-gray-800">
+        <h3 class="text-sm font-semibold uppercase tracking-wider text-gray-300">Settings</h3>
+        <button id="close-settings" class="text-gray-500 hover:text-white transition text-lg leading-none">&times;</button>
+    </div>
+    <div class="p-5 space-y-6 flex-1 overflow-y-auto">
+        <div>
+            <label class="flex justify-between text-xs text-gray-400 mb-2">
+                <span>Max Tokens</span><span id="max-tokens-val" class="text-gray-300 tabular-nums">512</span>
+            </label>
+            <input id="max-tokens" type="range" min="64" max="2048" value="512" step="64" class="w-full">
+        </div>
+        <div>
+            <label class="flex justify-between text-xs text-gray-400 mb-2">
+                <span>Max Tool Iterations</span><span id="max-iter-val" class="text-gray-300 tabular-nums">5</span>
+            </label>
+            <input id="max-iter" type="range" min="1" max="10" value="5" class="w-full">
+        </div>
+        <div>
+            <label class="flex justify-between text-xs text-gray-400 mb-2">
+                <span>Temperature</span><span id="temp-val" class="text-gray-300 tabular-nums">0.0</span>
+            </label>
+            <input id="temperature" type="range" min="0" max="1" value="0" step="0.1" class="w-full">
+        </div>
+        <hr class="border-gray-800">
+        <h4 class="text-[11px] uppercase tracking-wider text-gray-500">Context Management</h4>
+        <div>
+            <label class="flex justify-between text-xs text-gray-400 mb-2">
+                <span>Max Context (chars)</span><span id="max-ctx-val" class="text-gray-300 tabular-nums">12000</span>
+            </label>
+            <input id="max-ctx" type="range" min="4000" max="24000" value="12000" step="1000" class="w-full">
+        </div>
+        <div>
+            <label class="flex justify-between text-xs text-gray-400 mb-2">
+                <span>Tool Result Limit (chars)</span><span id="tool-limit-val" class="text-gray-300 tabular-nums">2500</span>
+            </label>
+            <input id="tool-limit" type="range" min="500" max="5000" value="2500" step="250" class="w-full">
+        </div>
+        <div>
+            <label class="flex justify-between text-xs text-gray-400 mb-2">
+                <span>Skill Instruction Limit (chars)</span><span id="skill-limit-val" class="text-gray-300 tabular-nums">2500</span>
+            </label>
+            <input id="skill-limit" type="range" min="500" max="5000" value="2500" step="250" class="w-full">
+        </div>
+        <div>
+            <label class="flex justify-between text-xs text-gray-400 mb-2">
+                <span>Fetch Response Limit (chars)</span><span id="fetch-limit-val" class="text-gray-300 tabular-nums">2000</span>
+            </label>
+            <input id="fetch-limit" type="range" min="500" max="5000" value="2000" step="250" class="w-full">
+        </div>
+        <hr class="border-gray-800">
+        <button id="clear-chat" class="w-full text-xs text-red-400 hover:text-red-300 border border-red-900/40 hover:border-red-800 rounded-lg py-2 transition">
+            Clear conversation
+        </button>
+    </div>
+</div>
+
+<!-- Skills panel -->
+<div id="skills-backdrop" class="hidden fixed inset-0 bg-black/40 z-40"></div>
+<div id="skills-panel" class="hidden fixed inset-y-0 right-0 w-96 bg-gray-900 border-l border-gray-800 shadow-2xl z-50 flex flex-col">
+    <div class="flex justify-between items-center p-5 border-b border-gray-800">
+        <h3 class="text-sm font-semibold uppercase tracking-wider text-gray-300">Skills</h3>
+        <button id="close-skills" class="text-gray-500 hover:text-white transition text-lg leading-none">&times;</button>
+    </div>
+    <div class="p-5 space-y-5 flex-1 overflow-y-auto">
+        <!-- Loaded Skills -->
+        <div>
+            <h4 class="text-[11px] uppercase tracking-wider text-gray-500 mb-2">Loaded Skills</h4>
+            <div id="skills-list" class="space-y-2 max-h-48 overflow-y-auto"></div>
+        </div>
+
+        <hr class="border-gray-800">
+
+        <!-- Scripts -->
+        <div>
+            <h4 class="text-[11px] uppercase tracking-wider text-gray-500 mb-2">Scripts</h4>
+            <div id="scripts-list" class="space-y-2 max-h-64 overflow-y-auto">
+                <div class="text-[10px] text-gray-600">No scripts loaded</div>
+            </div>
+        </div>
+
+        <hr class="border-gray-800">
+
+        <!-- Fetch from URL -->
+        <div>
+            <h4 class="text-[11px] uppercase tracking-wider text-gray-500 mb-2">Fetch from URL</h4>
+            <p class="text-[10px] text-gray-600 mb-2">Paste a SKILL.md URL or a collection manifest (.yml)</p>
+            <div class="flex gap-2">
+                <input id="skill-url" type="text" placeholder="https://raw.githubusercontent.com/..." value="https://raw.githubusercontent.com/RHEcosystemAppEng/agentic-collections/main/marketplace/rh-agentic-collection.yml"
+                    class="flex-1 bg-gray-800 text-gray-200 placeholder-gray-600 border border-gray-700/60 rounded-lg px-3 py-1.5 text-[11px] focus:outline-none focus:border-emerald-500">
+                <button id="fetch-skill-btn" class="bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-semibold px-3 py-1.5 rounded-lg transition whitespace-nowrap">
+                    Fetch
+                </button>
+            </div>
+            <div id="fetch-status" class="text-[11px] mt-2 text-gray-500"></div>
+            <div id="module-picker" class="hidden mt-3 space-y-1 max-h-48 overflow-y-auto bg-gray-800/40 rounded-lg p-2 text-xs"></div>
+        </div>
+
+        <hr class="border-gray-800">
+
+        <!-- Add manually -->
+        <div>
+            <h4 class="text-[11px] uppercase tracking-wider text-gray-500 mb-2">Add Manually</h4>
+            <div class="space-y-2">
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <span class="text-xs text-gray-400">Upload .md file:</span>
+                    <input id="skill-file-input" type="file" accept=".md" class="text-[11px] text-gray-400 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[11px] file:bg-gray-800 file:text-gray-300 file:cursor-pointer">
+                </label>
+                <div>
+                    <textarea id="skill-paste" rows="4" placeholder="Paste SKILL.md content here..."
+                        class="w-full bg-gray-800 text-gray-200 placeholder-gray-600 border border-gray-700/60 rounded-lg px-3 py-2 text-[11px] focus:outline-none focus:border-emerald-500 resize-none"></textarea>
+                    <button id="paste-skill-btn" class="w-full mt-1 bg-gray-700 hover:bg-gray-600 text-gray-200 text-[11px] font-medium py-1.5 rounded-lg transition">
+                        Add Pasted Skill
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Floating notes container (for createNote tool) -->
+<div id="notes-container" class="fixed bottom-24 right-4 space-y-2 z-30 max-w-xs"></div>
+
+<script type="module">
+// ─── Imports ────────────────────────────────────────────────────────────────
+import {
+    pipeline,
+    TextStreamer,
+    env,
+} from "https://cdn.jsdelivr.net/npm/@huggingface/transformers";
+
+// ─── Model Catalogue ────────────────────────────────────────────────────────
+const MODELS = {
+    "gemma-4-e2b": {
+        id: "onnx-community/gemma-4-E2B-it-ONNX",
+        name: "Gemma 4 E2B",
+        preferredDtype: "q4f16",
+        fallbackDtype: "q4",
+        needsF16: true,
+    },
+    "gemma-4-e4b": {
+        id: "onnx-community/gemma-4-E4B-it-ONNX",
+        name: "Gemma 4 E4B",
+        preferredDtype: "q4f16",
+        fallbackDtype: "q4",
+        needsF16: true,
+    },
+    "qwen3-4b": {
+        id: "onnx-community/Qwen3-4B-ONNX",
+        name: "Qwen3 4B",
+        preferredDtype: "q4f16",
+        fallbackDtype: "q4",
+        needsF16: true,
+    },
+};
+
+// ─── Tool Schema (passed to the model) ──────────────────────────────────────
+const TOOLS_SCHEMA = [
+    {
+        type: "function",
+        function: {
+            name: "getCurrentTime",
+            description: "Returns the current date, time, and timezone.",
+            parameters: { type: "object", properties: {}, required: [] },
+        },
+    },
+    {
+        type: "function",
+        function: {
+            name: "changeBackgroundColor",
+            description: "Changes the background color of the web page.",
+            parameters: {
+                type: "object",
+                properties: {
+                    color: { type: "string", description: "A CSS color value (e.g. 'red', '#1e293b', 'rgb(30,41,59)')." },
+                },
+                required: ["color"],
+            },
+        },
+    },
+    {
+        type: "function",
+        function: {
+            name: "readPageContent",
+            description: "Reads the visible text content of the web page (first 2000 chars).",
+            parameters: { type: "object", properties: {}, required: [] },
+        },
+    },
+    {
+        type: "function",
+        function: {
+            name: "querySelector",
+            description: "Finds DOM elements matching a CSS selector and returns their tag, id, classes, and text.",
+            parameters: {
+                type: "object",
+                properties: {
+                    selector: { type: "string", description: "A CSS selector string." },
+                },
+                required: ["selector"],
+            },
+        },
+    },
+    {
+        type: "function",
+        function: {
+            name: "createNote",
+            description: "Creates a floating sticky-note card on the page.",
+            parameters: {
+                type: "object",
+                properties: {
+                    title:   { type: "string", description: "Note heading." },
+                    content: { type: "string", description: "Note body text." },
+                    color:   { type: "string", description: "CSS background color. Defaults to amber." },
+                },
+                required: ["title", "content"],
+            },
+        },
+    },
+    {
+        type: "function",
+        function: {
+            name: "runJavaScript",
+            description: "Evaluates a JavaScript expression in the page and returns the result.",
+            parameters: {
+                type: "object",
+                properties: {
+                    code: { type: "string", description: "JavaScript code to evaluate." },
+                },
+                required: ["code"],
+            },
+        },
+    },
+    {
+        type: "function",
+        function: {
+            name: "fetchURL",
+            description: "Fetches a URL and returns its text content. May fail due to CORS.",
+            parameters: {
+                type: "object",
+                properties: {
+                    url: { type: "string", description: "The URL to fetch." },
+                },
+                required: ["url"],
+            },
+        },
+    },
+    {
+        type: "function",
+        function: {
+            name: "scrollPage",
+            description: "Scrolls the page up or down by a given number of pixels.",
+            parameters: {
+                type: "object",
+                properties: {
+                    direction: { type: "string", enum: ["up", "down"], description: "Scroll direction." },
+                    pixels:    { type: "number", description: "Pixels to scroll. Defaults to 300." },
+                },
+                required: ["direction"],
+            },
+        },
+    },
+    {
+        type: "function",
+        function: {
+            name: "useSkill",
+            description: "Loads a skill's detailed instructions by name. Call this before answering domain-specific questions.",
+            parameters: {
+                type: "object",
+                properties: {
+                    name: { type: "string", description: "The skill name from the intent routing table (e.g. 'red-hat-cve-explainer')." },
+                },
+                required: ["name"],
+            },
+        },
+    },
+    {
+        type: "function",
+        function: {
+            name: "listSkills",
+            description: "Lists all available skills with their names and descriptions.",
+            parameters: { type: "object", properties: {}, required: [] },
+        },
+    },
+    {
+        type: "function",
+        function: {
+            name: "runScript",
+            description: "Runs a Python script from the scripts registry in a browser sandbox (Pyodide). Returns stdout output. Cannot access local filesystem or CLI tools like oc/kubectl.",
+            parameters: {
+                type: "object",
+                properties: {
+                    key: { type: "string", description: "Script key in format 'module/filename' (e.g. 'ocp-admin/aggregate.py'). Call listScripts first to see available scripts." },
+                },
+                required: ["key"],
+            },
+        },
+    },
+    {
+        type: "function",
+        function: {
+            name: "listScripts",
+            description: "Lists all available scripts with their names, languages, and module.",
+            parameters: { type: "object", properties: {}, required: [] },
+        },
+    },
+];
+
+// ─── Tool Implementations ───────────────────────────────────────────────────
+const TOOLS_IMPL = {
+    getCurrentTime() {
+        const now = new Date();
+        return {
+            time: now.toLocaleString(),
+            iso: now.toISOString(),
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        };
+    },
+
+    changeBackgroundColor({ color }) {
+        document.body.style.backgroundColor = color;
+        return { success: true, color };
+    },
+
+    readPageContent() {
+        const text = document.getElementById("chat")?.innerText ?? document.body.innerText;
+        return { content: text.slice(0, 2000), length: text.length };
+    },
+
+    querySelector({ selector }) {
+        try {
+            const els = [...document.querySelectorAll(selector)].slice(0, 10);
+            const results = els.map((el) => ({
+                tag: el.tagName.toLowerCase(),
+                id: el.id || null,
+                classes: [...el.classList].join(" ") || null,
+                text: el.textContent?.slice(0, 120) || null,
+            }));
+            return { count: results.length, elements: results };
+        } catch (e) {
+            return { error: e.message };
+        }
+    },
+
+    createNote({ title, content, color = "#fef3c7" }) {
+        const container = document.getElementById("notes-container");
+        const note = document.createElement("div");
+        note.className = "p-3 rounded-lg shadow-lg animate-fade-in";
+        note.style.cssText = `background:${color};color:#1f2937;`;
+        const closeBtn = document.createElement("button");
+        closeBtn.textContent = "\u00d7";
+        closeBtn.className = "float-right ml-2 text-gray-600 hover:text-gray-900 text-lg leading-none";
+        closeBtn.onclick = () => note.remove();
+        const h = document.createElement("strong");
+        h.className = "text-sm";
+        h.textContent = title;
+        const p = document.createElement("p");
+        p.className = "text-xs mt-1";
+        p.textContent = content;
+        note.append(closeBtn, h, p);
+        container.appendChild(note);
+        return { success: true, title };
+    },
+
+    runJavaScript({ code }) {
+        try {
+            const iframe = document.createElement("iframe");
+            iframe.sandbox = "allow-scripts";
+            iframe.style.display = "none";
+            document.body.appendChild(iframe);
+            try {
+                const win = iframe.contentWindow;
+                const result = win.eval(code);
+                return { success: true, result: String(result ?? "undefined") };
+            } catch (e) {
+                return { success: false, error: e.message };
+            } finally {
+                iframe.remove();
+            }
+        } catch (e) {
+            return { success: false, error: e.message };
+        }
+    },
+
+    async fetchURL({ url }) {
+        const attemptFetch = async (targetUrl) => {
+            const r = await fetch(targetUrl);
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            return r;
+        };
+
+        try {
+            let r;
+            try {
+                r = await attemptFetch(url);
+            } catch (directErr) {
+                // CORS likely blocked — try corsproxy.io as fallback
+                const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
+                try {
+                    r = await attemptFetch(proxyUrl);
+                } catch {
+                    return { success: false, error: `CORS blocked and proxy failed: ${directErr.message}` };
+                }
+            }
+            const text = await r.text();
+            const isJson = (r.headers.get("content-type") || "").includes("json") || text.trimStart().startsWith("{");
+            if (isJson) {
+                try {
+                    const obj = JSON.parse(text);
+                    // For Red Hat Security Data API CVE responses, extract the key fields
+                    // so the model gets structured data without the massive affected_release list
+                    if (obj.name && obj.threat_severity && (obj.cvss3 || obj.details)) {
+                        const summary = {
+                            name: obj.name,
+                            threat_severity: obj.threat_severity,
+                            public_date: obj.public_date,
+                            cvss3_score: obj.cvss3?.cvss3_base_score,
+                            cvss3_vector: obj.cvss3?.cvss3_scoring_vector,
+                            cwe: obj.cwe,
+                            bugzilla: obj.bugzilla?.description,
+                            details: (obj.details || []).map(d => d.slice(0, 500)),
+                            statement: obj.statement,
+                            mitigation: obj.mitigation?.value?.slice(0, 500),
+                            affected_products: (obj.affected_release || []).slice(0, 8).map(r => ({
+                                product: r.product_name,
+                                advisory: r.advisory,
+                                package: r.package,
+                            })),
+                            total_affected: (obj.affected_release || []).length,
+                            package_state: obj.package_state,
+                            references: obj.references,
+                        };
+                        return { success: true, status: r.status, json: summary };
+                    }
+                    const jsonStr = JSON.stringify(obj);
+                    const jLimit = state.settings.fetchLimit + 1000;
+                    return { success: true, status: r.status, json: JSON.parse(jsonStr.length > jLimit ? jsonStr.slice(0, jLimit) + "..." : jsonStr) };
+                } catch { /* fall through to text */ }
+            }
+            return { success: true, status: r.status, content: text.slice(0, state.settings.fetchLimit), length: text.length };
+        } catch (e) {
+            return { success: false, error: e.message };
+        }
+    },
+
+    scrollPage({ direction, pixels = 300 }) {
+        const amount = direction === "up" ? -Math.abs(pixels) : Math.abs(pixels);
+        window.scrollBy({ top: amount, behavior: "smooth" });
+        return { success: true, scrolled: amount };
+    },
+
+    useSkill({ name }) {
+        const skill = skillsRegistry.get(name);
+        if (!skill) {
+            const available = [...skillsRegistry.keys()];
+            return { error: `Unknown skill: ${name}`, available };
+        }
+        return { instructions: getSkillInstructions(skill) };
+    },
+
+    listSkills() {
+        return [...skillsRegistry.values()].map(s => ({
+            name: s.name,
+            description: s.description,
+        }));
+    },
+
+    listScripts() {
+        return [...scriptsRegistry.entries()].map(([key, s]) => ({
+            key,
+            name: s.name,
+            language: s.language,
+            module: s.module,
+        }));
+    },
+
+    async runScript({ key }) {
+        const script = scriptsRegistry.get(key);
+        if (!script) {
+            const available = [...scriptsRegistry.keys()];
+            return { error: `Unknown script: ${key}`, available };
+        }
+        if (script.language !== "python") {
+            return { error: `Only Python scripts can run in browser. "${key}" is ${script.language}. Show it as a code block the user can copy.`, source: script.source.slice(0, 500) };
+        }
+        return await runPythonScript(key, null);
+    },
+};
+
+// ─── Skills Registry ─────────────────────────────────────────────────────────
+const skillsRegistry = new Map();
+const scriptsRegistry = new Map();
+
+function parseSkillMd(raw) {
+    const fm = raw.match(/^---\s*\n([\s\S]*?)\n---\s*\n([\s\S]*)$/);
+    if (!fm) return { name: "unknown", description: "", body: raw, raw };
+    const meta = {};
+    for (const line of fm[1].split("\n")) {
+        const idx = line.indexOf(":");
+        if (idx > 0) {
+            const key = line.slice(0, idx).trim();
+            const val = line.slice(idx + 1).trim().replace(/^["']|["']$/g, "");
+            meta[key] = val;
+        }
+    }
+    return {
+        name: meta.name || "unknown",
+        description: meta.description || "",
+        body: fm[2].trim(),
+        raw,
+    };
+}
+
+function registerSkill(rawMarkdown, opts = {}) {
+    const skill = parseSkillMd(rawMarkdown);
+    skill.builtin = opts.builtin ?? false;
+    skill.source = opts.source ?? (opts.builtin ? "builtin" : "manual");
+    skill.sourceUrl = opts.sourceUrl ?? null;
+    skillsRegistry.set(skill.name, skill);
+    rebuildSystemPrompt();
+    renderSkillsList();
+}
+
+function removeSkill(name) {
+    skillsRegistry.delete(name);
+    rebuildSystemPrompt();
+    renderSkillsList();
+}
+
+function rebuildSystemPrompt() {
+    const skills = [...skillsRegistry.values()];
+    const skillList = skills
+        .map(s => `- ${s.name}: ${s.description.slice(0, 120)}`)
+        .join("\n");
+
+    const systemContent = `You are rh-agent, a helpful AI assistant specializing in Red Hat products and services. You help sysadmins and developers with:
+
+- CVE analysis and remediation guidance
+- Product lifecycle and end-of-life information
+- Diagnostic data collection (sos report, must-gather)
+- Support case severity assessment
+
+## How to Use Skills
+When a user asks a domain-specific question that matches one of your available skills, follow this multi-step process:
+1. Call useSkill({"name":"<skill-name>"}) to load the skill's instructions.
+2. Read the instructions returned by the tool carefully.
+3. Follow the instructions step by step. If they tell you to call fetchURL or another tool, do so.
+4. After gathering all needed information, compose a complete answer based on the skill's output format.
+
+## Available Skills
+${skillList}
+
+## Tools
+- useSkill: Load a skill's instructions by name.
+- listSkills: List all available skills.
+- fetchURL: Fetch content from a URL. Use this for web lookups, API calls, etc.
+- listScripts: List available Python scripts from loaded collections.
+- runScript: Run a Python script in the browser sandbox (Pyodide). Cannot access CLI tools.
+
+## Important Rules
+- After a tool returns a result, you MUST generate a text response — never leave the response empty.
+- Shell/CLI commands (oc, kubectl, curl) cannot run in this environment. Show them as text suggestions instead.
+- Python scripts can be run in browser via runScript. For shell scripts, show as copyable code blocks.
+- Always answer the user's question completely after you have gathered information.`;
+
+    if (state.messages.length > 0 && state.messages[0]?.role === "system") {
+        state.messages[0].content = systemContent;
+    } else {
+        state.messages.unshift({ role: "system", content: systemContent });
+    }
+}
+
+function renderSkillsList() {
+    const list = document.getElementById("skills-list");
+    if (!list) return;
+    list.innerHTML = "";
+    for (const [name, skill] of skillsRegistry) {
+        const card = document.createElement("div");
+        card.className = "bg-gray-800/60 rounded-lg p-3 space-y-1";
+        const header = document.createElement("div");
+        header.className = "flex items-center justify-between";
+        const nameEl = document.createElement("span");
+        nameEl.className = "text-xs font-medium text-emerald-400 truncate";
+        nameEl.textContent = name;
+        const badges = document.createElement("div");
+        badges.className = "flex items-center gap-2";
+        const tag = document.createElement("span");
+        tag.className = "text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded " +
+            (skill.builtin ? "bg-blue-900/40 text-blue-400" : "bg-purple-900/40 text-purple-400");
+        tag.textContent = skill.source;
+        badges.appendChild(tag);
+        if (!skill.builtin) {
+            const rm = document.createElement("button");
+            rm.className = "text-gray-500 hover:text-red-400 text-sm leading-none transition";
+            rm.textContent = "\u00d7";
+            rm.onclick = () => removeSkill(name);
+            badges.appendChild(rm);
+        }
+        header.append(nameEl, badges);
+        const desc = document.createElement("div");
+        desc.className = "text-[11px] text-gray-500 leading-snug line-clamp-2";
+        desc.textContent = skill.description;
+        card.append(header, desc);
+        list.appendChild(card);
+    }
+    const badge = document.getElementById("skills-count");
+    if (badge) badge.textContent = skillsRegistry.size;
+}
+
+async function fetchSkillsFromUrl(url) {
+    const statusEl = document.getElementById("fetch-status");
+    const setFetchStatus = (msg, err) => {
+        if (!statusEl) return;
+        statusEl.textContent = msg;
+        statusEl.className = "text-[11px] mt-2 " + (err ? "text-red-400" : "text-emerald-400");
+    };
+    try {
+        setFetchStatus("Fetching\u2026", false);
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const text = await resp.text();
+
+        if (url.endsWith(".yml") || url.endsWith(".yaml")) {
+            const modules = parseCollectionYaml(text);
+            if (modules.length === 0) throw new Error("No modules found in manifest");
+            showModulePicker(modules, url);
+            setFetchStatus(`Found ${modules.length} modules. Select and install.`, false);
+            return;
+        }
+
+        registerSkill(text, { source: "url", sourceUrl: url });
+        setFetchStatus("Skill loaded successfully.", false);
+    } catch (e) {
+        setFetchStatus(`Error: ${e.message}`, true);
+    }
+}
+
+function parseCollectionYaml(text) {
+    const modules = [];
+    let current = null;
+    for (const line of text.split("\n")) {
+        const trimmed = line.trim();
+        if (/^-\s+name:\s*"?(.+?)"?\s*$/.test(trimmed)) {
+            if (current) modules.push(current);
+            current = { name: trimmed.match(/name:\s*"?(.+?)"?\s*$/)[1] };
+        } else if (current && /^description:\s*"?(.+?)"?\s*$/.test(trimmed)) {
+            current.description = trimmed.match(/description:\s*"?(.+?)"?\s*$/)[1];
+        } else if (current && /^repository:\s*"?(.+?)"?\s*$/.test(trimmed)) {
+            current.repository = trimmed.match(/repository:\s*"?(.+?)"?\s*$/)[1];
+        } else if (current && /^path:\s*"?(.+?)"?\s*$/.test(trimmed)) {
+            current.path = trimmed.match(/path:\s*"?(.+?)"?\s*$/)[1];
+        }
+    }
+    if (current) modules.push(current);
+    return modules.filter(m => m.name && m.repository && m.path);
+}
+
+function showModulePicker(modules, manifestUrl) {
+    const container = document.getElementById("module-picker");
+    if (!container) return;
+    container.innerHTML = "";
+    container.classList.remove("hidden");
+
+    for (const mod of modules) {
+        const row = document.createElement("label");
+        row.className = "flex items-start gap-2 p-2 rounded hover:bg-gray-800/60 cursor-pointer";
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.className = "mt-0.5 accent-emerald-500";
+        cb.dataset.modName = mod.name;
+        cb.dataset.modRepo = mod.repository;
+        cb.dataset.modPath = mod.path;
+        const info = document.createElement("div");
+        info.innerHTML = `<div class="text-xs font-medium text-gray-200">${mod.name}</div>` +
+            `<div class="text-[10px] text-gray-500">${mod.description || ""}</div>`;
+        row.append(cb, info);
+        container.appendChild(row);
+    }
+
+    const btn = document.createElement("button");
+    btn.className = "w-full mt-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold py-1.5 rounded-lg transition";
+    btn.textContent = "Install Selected";
+    btn.onclick = () => installSelectedModules(container);
+    container.appendChild(btn);
+}
+
+function registerScript(name, source, language, moduleName) {
+    scriptsRegistry.set(`${moduleName}/${name}`, { name, source, language, module: moduleName });
+    renderScriptsList();
+}
+
+async function installSelectedModules(container) {
+    const checked = container.querySelectorAll("input[type=checkbox]:checked");
+    if (checked.length === 0) return;
+    const statusEl = document.getElementById("fetch-status");
+    const setFetchStatus = (msg, err) => {
+        if (!statusEl) return;
+        statusEl.textContent = msg;
+        statusEl.className = "text-[11px] mt-2 " + (err ? "text-red-400" : "text-emerald-400");
+    };
+
+    let installed = 0, scripts = 0, failed = 0;
+    for (const cb of checked) {
+        const repo = cb.dataset.modRepo;
+        const path = cb.dataset.modPath;
+        const modName = cb.dataset.modName;
+        const match = repo.match(/github\.com\/([^/]+)\/([^/]+)/);
+        if (!match) { failed++; continue; }
+        const [, owner, repoName] = match;
+        try {
+            // Fetch skills
+            setFetchStatus(`Fetching skills from ${modName}\u2026`, false);
+            const apiUrl = `https://api.github.com/repos/${owner}/${repoName}/contents/${path}/skills`;
+            const dirResp = await fetch(apiUrl);
+            if (!dirResp.ok) throw new Error(`HTTP ${dirResp.status}`);
+            const dirs = await dirResp.json();
+            const skillDirs = dirs.filter(d => d.type === "dir");
+            for (const dir of skillDirs) {
+                try {
+                    const rawUrl = `https://raw.githubusercontent.com/${owner}/${repoName}/main/${dir.path}/SKILL.md`;
+                    const skillResp = await fetch(rawUrl);
+                    if (!skillResp.ok) continue;
+                    const md = await skillResp.text();
+                    registerSkill(md, { source: "url", sourceUrl: rawUrl });
+                    installed++;
+                } catch { failed++; }
+            }
+
+            // Fetch scripts
+            setFetchStatus(`Fetching scripts from ${modName}\u2026`, false);
+            try {
+                const scriptsApiUrl = `https://api.github.com/repos/${owner}/${repoName}/contents/${path}/scripts`;
+                const scriptsResp = await fetch(scriptsApiUrl);
+                if (scriptsResp.ok) {
+                    const scriptEntries = await scriptsResp.json();
+                    await fetchScriptsRecursive(scriptEntries, owner, repoName, modName);
+                }
+            } catch { /* scripts dir may not exist */ }
+        } catch { failed++; }
+    }
+    container.classList.add("hidden");
+    scripts = scriptsRegistry.size;
+    setFetchStatus(`Installed ${installed} skill(s)${scripts ? `, ${scripts} script(s)` : ""}${failed ? `, ${failed} failed` : ""}.`, failed > 0);
+}
+
+async function fetchScriptsRecursive(entries, owner, repoName, modName) {
+    for (const entry of entries) {
+        if (entry.type === "dir") {
+            try {
+                const subResp = await fetch(entry.url);
+                if (subResp.ok) {
+                    const subEntries = await subResp.json();
+                    await fetchScriptsRecursive(subEntries, owner, repoName, modName);
+                }
+            } catch { /* skip */ }
+        } else if (entry.type === "file" && entry.download_url) {
+            const ext = entry.name.split(".").pop().toLowerCase();
+            const lang = { py: "python", sh: "bash", yaml: "yaml", yml: "yaml", json: "json", js: "javascript" }[ext];
+            if (!lang) continue;
+            try {
+                const resp = await fetch(entry.download_url);
+                if (!resp.ok) continue;
+                const source = await resp.text();
+                registerScript(entry.name, source, lang, modName);
+            } catch { /* skip */ }
+        }
+    }
+}
+
+function renderScriptsList() {
+    const container = document.getElementById("scripts-list");
+    if (!container) return;
+    container.innerHTML = "";
+    if (scriptsRegistry.size === 0) {
+        container.innerHTML = `<div class="text-[10px] text-gray-600">No scripts loaded</div>`;
+        return;
+    }
+    for (const [key, script] of scriptsRegistry) {
+        const card = document.createElement("div");
+        card.className = "bg-gray-800/60 rounded-lg p-3 space-y-2";
+        card.innerHTML = `
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <span class="text-xs font-medium text-gray-200">${escHtml(script.name)}</span>
+                    <span class="text-[9px] px-1.5 py-0.5 rounded bg-gray-700 text-gray-400 uppercase">${script.language}</span>
+                </div>
+                <div class="flex gap-1">
+                    <button class="copy-script text-[9px] px-2 py-0.5 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 transition" data-key="${escHtml(key)}">Copy</button>
+                    ${script.language === "python" ? `<button class="run-script text-[9px] px-2 py-0.5 rounded bg-emerald-700 text-white hover:bg-emerald-600 transition" data-key="${escHtml(key)}">Run in Browser</button>` : ""}
+                </div>
+            </div>
+            <pre class="text-[10px] text-gray-400 bg-black/30 rounded p-2 overflow-x-auto max-h-32 overflow-y-auto leading-relaxed"><code>${escHtml(script.source.slice(0, 2000))}${script.source.length > 2000 ? "\n\u2026 truncated" : ""}</code></pre>
+            <div class="script-output hidden bg-black/50 rounded p-2 text-[10px] font-mono text-gray-300 max-h-40 overflow-y-auto"></div>
+        `;
+        card.querySelector(".copy-script")?.addEventListener("click", () => {
+            navigator.clipboard.writeText(script.source);
+            const btn = card.querySelector(".copy-script");
+            btn.textContent = "Copied!";
+            setTimeout(() => btn.textContent = "Copy", 1500);
+        });
+        card.querySelector(".run-script")?.addEventListener("click", () => runPythonScript(key, card.querySelector(".script-output")));
+        container.appendChild(card);
+    }
+}
+
+// ─── Pyodide Integration ─────────────────────────────────────────────────────
+let pyodideInstance = null;
+let pyodidePromise = null;
+
+async function loadPyodideRuntime() {
+    if (pyodideInstance) return pyodideInstance;
+    if (pyodidePromise) return pyodidePromise;
+    pyodidePromise = (async () => {
+        appendLog("Loading Pyodide runtime (~15 MB, cached after first load)\u2026", "text-amber-400");
+        const script = document.createElement("script");
+        script.src = "https://cdn.jsdelivr.net/pyodide/v0.27.7/full/pyodide.js";
+        document.head.appendChild(script);
+        await new Promise((resolve, reject) => { script.onload = resolve; script.onerror = reject; });
+        pyodideInstance = await globalThis.loadPyodide();
+        appendLog("Pyodide ready", "text-emerald-400");
+        return pyodideInstance;
+    })();
+    return pyodidePromise;
+}
+
+async function runPythonScript(scriptKey, outputEl) {
+    const script = scriptsRegistry.get(scriptKey);
+    if (!script) return;
+    if (outputEl) {
+        outputEl.classList.remove("hidden");
+        outputEl.textContent = "Loading Python runtime\u2026";
+    }
+    try {
+        const pyodide = await loadPyodideRuntime();
+        pyodide.setStdout({ batched: (text) => { if (outputEl) outputEl.textContent += text + "\n"; } });
+        pyodide.setStderr({ batched: (text) => { if (outputEl) outputEl.textContent += "[stderr] " + text + "\n"; } });
+        if (outputEl) outputEl.textContent = "";
+        const result = await pyodide.runPythonAsync(script.source);
+        if (result !== undefined && result !== null) {
+            const resultStr = String(result);
+            if (outputEl) outputEl.textContent += resultStr + "\n";
+            return { success: true, output: outputEl?.textContent || resultStr };
+        }
+        return { success: true, output: outputEl?.textContent || "(no output)" };
+    } catch (e) {
+        const errMsg = `Error: ${e.message}`;
+        if (outputEl) {
+            outputEl.textContent += `\n${errMsg}`;
+            outputEl.classList.add("text-red-400");
+        }
+        return { success: false, error: e.message };
+    }
+}
+
+// ─── Bundled rh-basic Skills ─────────────────────────────────────────────────
+const BUNDLED_SKILLS = [
+`---
+name: red-hat-cve-explainer
+description: Explain a CVE using Red Hat's severity rating system. Looks up the CVE, explains the rating, and suggests a course of action.
+---
+# Red Hat CVE Explainer
+
+Extract CVE-YYYY-NNNNN from user message. If none, ask. Handle multiple CVEs separately in one response.
+
+## Prerequisites
+
+None -- falls back to fetchURL if the Red Hat Security MCP is unavailable.
+
+## When to Use This Skill
+
+When the user asks about a specific CVE: what it is, its severity, or whether to patch.
+
+## Workflow
+
+1. Extract CVE ID from the user message.
+2. Look up CVE metadata via fetchURL.
+3. Look up linked advisories or extract from CVE response.
+4. Return severity, affected products, and action recommendation.
+
+## Lookup Sequence
+
+CVE metadata (stop when you have data):
+1. fetchURL -> https://access.redhat.com/hydra/rest/securitydata/cve/{CVE-ID}.json  (returns JSON with severity, CVSS, affected_release, package_state, etc.)
+2. No Red Hat data or fetch fails: say so, direct user to https://nvd.nist.gov/vuln/detail/{CVE-ID}
+
+## Advisory Types
+
+| Prefix | Type | What it fixes |
+|--------|------|---------------|
+| RHSA | Red Hat Security Advisory | One or more CVEs -- highest urgency |
+| RHBA | Red Hat Bug Advisory | Bug fixes only -- no CVE, no security urgency |
+| RHEA | Red Hat Enhancement Advisory | New features/capabilities -- no security fix |
+
+In Output, label each advisory by type: e.g., "RHSA-2024:1234 (Security Advisory)".
+
+## Red Hat Severity
+
+- Critical -- Remote unauthenticated, no user interaction; wormable or trivially automated
+- Important -- Local privesc to root, authenticated RCE, or significant DoS
+- Moderate -- Would be Critical/Important but requires unusual config, user interaction, or other preconditions
+- Low -- Minimal real-world impact; exploitation requires unlikely circumstances
+
+Scored with CVSS v3 (0.0-10.0). Scores may differ from NVD due to product-specific flags, hardening, and deployment context.
+
+## Output
+
+### [CVE ID]
+
+**Severity:** [Red Hat rating] (CVSS [score])
+
+**What it is:** 1-2 sentences plain language.
+
+**Why [rating]:** Connect flaw to rating criteria -- ease of exploitation, auth/interaction requirements.
+
+**Affected products:** Affected Red Hat products with fix status. Per advisory: ID + remediation. If no advisory: note fix is under investigation, include published mitigations.
+
+**Action:**
+- Critical -> "Patch immediately. Exploitable by remote unauthenticated attackers."
+- Important -> "Patch at your next maintenance window."
+- Moderate -> "Include in your regular update cycle."
+- Low -> "Apply when convenient. Monitor for severity changes."
+- No patch -> include published mitigations from Red Hat's CVE page.
+
+Write for a sysadmin deciding urgency. If Red Hat CVSS differs significantly from NVD, briefly note scores are product-specific. Never speculate about exploit availability beyond Red Hat's data.`,
+
+`---
+name: red-hat-diagnostics
+description: Explain how to gather diagnostic information for Red Hat products (RHEL, OpenShift, Ansible Automation Platform, Satellite) to share with Red Hat Technical Support.
+---
+# Red Hat Diagnostic Information Gathering
+
+Identify product and deployment type. If unclear, ask. Provide specific commands and upload instructions.
+
+## Prerequisites
+
+None.
+
+## When to Use This Skill
+
+When the user needs to collect diagnostic data for a Red Hat support case.
+
+## Workflow
+
+1. Identify product and deployment type from the user message.
+2. Provide the correct diagnostic collection commands.
+3. Warn the user about sensitive data in the archive before sharing.
+4. Explain how to upload the resulting archive to Red Hat Support.
+
+## RHEL
+
+\`\`\`bash
+dnf install sos
+sos report
+\`\`\`
+
+Output: .tar.xz in /var/tmp/. Specific subsystems: sos report --only-plugins networking,storage
+
+## OpenShift Container Platform (OCP)
+
+\`\`\`bash
+oc adm must-gather --dest-dir ./must-gather
+tar cvaf must-gather.tar.gz ./must-gather*/
+\`\`\`
+
+Specific operators: oc adm must-gather --image=<operator-image> --dest-dir ./must-gather
+
+If registry.redhat.io unavailable: oc adm inspect <resource>
+
+## Ansible Automation Platform (AAP)
+
+Ask deployment type if not specified -- tool differs significantly.
+
+VM/RPM-based: sos report (includes AAP plugins automatically)
+
+Containerized:
+\`\`\`bash
+ansible-playbook -i <path_to_inventory> ansible.containerized_installer.log_gathering \\
+  -e 'target_sos_directory=/tmp/aap-logs' \\
+  -e 'case_number=<your_case_number>' \\
+  -e 'clean=true' \\
+  -e 'upload=true'
+\`\`\`
+
+OCP-based (Operator):
+\`\`\`bash
+oc adm must-gather \\
+  --image=registry.redhat.io/ansible-automation-platform-26/aap-must-gather-rhel9 \\
+  --dest-dir ./must-gather \\
+  -- /usr/bin/ns-gather <namespace>
+\`\`\`
+Then: tar cvaf aap-must-gather.tar.gz ./must-gather*/
+
+## Red Hat Satellite
+
+\`\`\`bash
+sos report
+foreman-debug -d /tmp/foreman-debug
+\`\`\`
+
+sos report includes the satellite plugin automatically. foreman-debug provides deeper Foreman/Katello data.
+
+## Sharing with Red Hat Support
+
+**Important:** Diagnostic archives collect comprehensive system data including configuration files, logs, and network details. Review the archive contents before sharing and redact any secrets or sensitive data.
+
+Attach archives at access.redhat.com/support. Large files: ftp://dropbox.redhat.com or Customer Portal file upload API.`,
+
+`---
+name: red-hat-product-lifecycle
+description: Explain a Red Hat product's lifecycle status, support phases, and recommended action. Answers questions like "Is RHEL 8.6 still supported?" or "When does OpenShift 4.14 reach end of maintenance?"
+---
+# Red Hat Product Lifecycle Advisor
+
+Identify product and version from user message. If unclear, ask. Look up lifecycle data and respond using the output format below.
+
+## Prerequisites
+
+None -- all data is available via fetchURL against public Red Hat documentation.
+
+## When to Use This Skill
+
+When the user asks about lifecycle status, support phases, or EOL dates for any Red Hat product or version.
+
+## Workflow
+
+1. Identify product and version from the user message.
+2. Fetch lifecycle data via fetchURL.
+3. Return current phase, key dates, and action recommendation.
+
+## Data Sources (stop when you have dates)
+
+RHEL major/minor:
+1. fetchURL -> https://access.redhat.com/product-life-cycles/api/v1/products?name=Red+Hat+Enterprise+Linux
+
+OpenShift, Ansible, JBoss, Satellite, all others:
+1. fetchURL -> https://access.redhat.com/product-life-cycles/api/v1/products?name=<URL-encoded product name>
+
+## Lifecycle Phase Reference
+
+RHEL 8/9/10 -- 10-year lifecycle
+- Full Support (~yr 1-5): Critical/Important/Moderate CVEs + urgent bugs + hardware enablement + minor releases ~every 6 months
+- Maintenance Support (~yr 5-10): same security criteria, urgent bugs only -- no new features, no new minor releases
+- Extended Life (after yr 10): no fixes; read-only portal access only
+
+OCP 4.x -- 18-month lifecycle per minor
+- Full Support: 6 months from GA (or 90 days after next minor, whichever is longer) -- Critical/Important CVEs + urgent bugs
+- Maintenance Support: through 18 months -- Critical/Important CVEs only
+- EUS (even minors: 4.12, 4.14, 4.16, ...): up to 48 months total
+
+## Red Hat Versioning & Backports
+
+- Backporting model -- Red Hat backports security fixes into the shipped package version rather than rebasing to upstream. Version numbers can look "old" but still carry all critical/important CVE fixes.
+- When asked "is my package up to date?" or "why is the version so old?", explain the backporting model.
+
+## Output
+
+### [Product] [Version]
+
+**Phase:** [current phase]
+**Dates:** GA [date] | End Full Support [date] | End Maintenance [date] | EOL [date]
+
+**What this means:** 1-2 sentences on what updates this version currently receives.
+
+**Action:**
+- Full Support -> "Apply updates on your normal cadence."
+- Maintenance Support -> "Security patches only. Plan upgrade to [next version] before [EOL date]."
+- Within 12 months of EOL -> "**Upgrade required by [date].** Start migration planning now."
+- EOL/Extended Life -> "**No security fixes available.** Upgrade immediately to [recommended version]."
+
+Use today's date to determine if support has already ended. State dates concretely, never relatively.`,
+
+`---
+name: red-hat-support-severity
+description: Help determine the correct severity level for a Red Hat support ticket, explain SLAs, and guide what information to include.
+---
+# Red Hat Support Ticket Severity Helper
+
+Extract from the user's message: product, what is happening, production vs dev/test, whether the system is completely down, whether a workaround exists. If environment type or outage status is unclear, ask before proceeding.
+
+## Prerequisites
+
+None.
+
+## When to Use This Skill
+
+When the user needs to determine the correct severity for a Red Hat support ticket.
+
+## Workflow
+
+1. Extract product, outage status, workaround availability from the user message.
+2. Map situation to Sev 1-4 using the decision table below.
+3. Return severity, SLA, and ticket preparation guidance.
+
+## Severity Decision
+
+| Situation | Severity |
+|---|---|
+| Production down, business halted, no workaround | Sev 1 -- Critical |
+| Production severely impaired, no workaround | Sev 2 -- High |
+| Partial loss or workaround exists in production; significant dev/test impact | Sev 3 -- Medium |
+| Minor issue, informational question, low dev/test impact | Sev 4 -- Low |
+
+## SLA Reference
+
+| Severity | Premium initial response | Standard initial response | 24x7 |
+|---|---|---|---|
+| Sev 1 | 1 hour | 1 business hour | Premium: yes; Standard: business hours only |
+| Sev 2 | 2 hours | 4 business hours | Must explicitly request when filing |
+| Sev 3 | 4 business hours | 1 business day | No |
+| Sev 4 | 1 business day | 2 business days | No |
+
+SLAs are measured from case submission. For Sev 1/2, following up with a phone call reduces actual response time.
+
+## Output
+
+**Recommended Severity:** Severity X -- [Critical / High / Medium / Low]
+
+**Why:** 1-2 sentences connecting the user's situation to the severity criteria.
+
+**SLA -- what to expect:**
+
+| | Premium | Standard |
+|---|---|---|
+| Initial response | [X] | [X] |
+| 24x7 | [yes/no/must request] | [yes/no] |
+
+**What to include in your ticket:**
+- Product name and version
+- Exact error messages or output
+- Steps to reproduce or timeline of events
+- Clear business impact statement
+- Any workaround you have tried
+
+**Filing tip:** For Sev 1/2: "Submit online, then immediately call your regional Red Hat support number. For Sev 2, explicitly request 24x7 coverage if needed outside business hours."
+
+Write for a sysadmin who needs to act now.`,
+];
+
+// ─── Application State ──────────────────────────────────────────────────────
+const state = {
+    generator: null,
+    isReady: false,
+    isGenerating: false,
+    aborted: false,
+    messages: [],
+    settings: { maxTokens: 512, maxIterations: 5, temperature: 0, maxContext: 12000, toolLimit: 2500, skillLimit: 2500, fetchLimit: 2000 },
+    capabilities: null,
+    currentChatId: null,
+};
+
+// ─── DOM Helpers ─────────────────────────────────────────────────────────────
+const $ = (s) => document.querySelector(s);
+const chat          = $("#chat");
+const welcome       = $("#welcome");
+const initBtn       = $("#init-btn");
+const inputForm     = $("#input-form");
+const userInput     = $("#user-input");
+const sendBtn       = $("#send-btn");
+const stopBtn       = $("#stop-btn");
+const statusText    = $("#status-text");
+const progressCtr   = $("#progress-container");
+const progressBar   = $("#progress-bar");
+const progressText  = $("#progress-text");
+const gpuBadge      = $("#gpu-badge");
+const modelSelect   = $("#model-select");
+const settingsBtn   = $("#settings-btn");
+const settingsPanel = $("#settings-panel");
+const settingsBack  = $("#settings-backdrop");
+const closeSettings = $("#close-settings");
+const logPanel      = $("#log-panel");
+const logContent    = $("#log-content");
+const logToggle     = $("#log-toggle");
+const skillsBtn     = $("#skills-btn");
+const skillsPanel   = $("#skills-panel");
+const skillsBack    = $("#skills-backdrop");
+const closeSkills   = $("#close-skills");
+const sidebar       = $("#sidebar");
+const sidebarOverlay = $("#sidebar-overlay");
+const chatHistory   = $("#chat-history");
+const hamburgerBtn  = $("#hamburger-btn");
+const newChatBtn    = $("#new-chat-btn");
+
+// ─── Chat History (localStorage) ─────────────────────────────────────────────
+const STORAGE_KEY = "rh-agent-chats";
+
+function generateId() {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+
+function loadAllChats() {
+    try {
+        return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+    } catch { return []; }
+}
+
+function saveAllChats(chats) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(chats));
+}
+
+function saveCurrentChat() {
+    if (!state.currentChatId) return;
+    const userMsgs = state.messages.filter(m => m.role === "user");
+    if (userMsgs.length === 0) return;
+    const chats = loadAllChats();
+    const title = userMsgs[0].content.slice(0, 40) + (userMsgs[0].content.length > 40 ? "\u2026" : "");
+    const idx = chats.findIndex(c => c.id === state.currentChatId);
+    const entry = {
+        id: state.currentChatId,
+        title,
+        messages: state.messages.filter(m => m.role !== "system"),
+        createdAt: idx >= 0 ? chats[idx].createdAt : new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+    };
+    if (idx >= 0) chats[idx] = entry; else chats.unshift(entry);
+    saveAllChats(chats);
+    renderChatHistory();
+}
+
+function startNewChat() {
+    saveCurrentChat();
+    state.currentChatId = generateId();
+    state.messages = [];
+    rebuildSystemPrompt();
+    chat.innerHTML = "";
+    const w = document.getElementById("welcome");
+    if (w) w.style.display = "";
+    else {
+        const welcome = document.createElement("div");
+        welcome.id = "welcome";
+        welcome.className = "text-center py-16 select-none";
+        welcome.innerHTML = `
+            <div class="text-5xl mb-5">&#9889;</div>
+            <h2 class="text-xl font-semibold text-gray-200 mb-2">WebGPU RH-Agent</h2>
+            <p class="text-gray-400 text-sm max-w-md mx-auto leading-relaxed mb-8">
+                AI agent running entirely in your browser via WebGPU.
+                No server, no API keys, complete privacy.
+            </p>
+            ${state.isReady ? "" : `<button id="init-btn" class="bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-semibold px-8 py-2.5 rounded-lg transition shadow-lg shadow-emerald-900/30">Initialize Agent</button>`}
+        `;
+        chat.appendChild(welcome);
+        const btn = welcome.querySelector("#init-btn");
+        if (btn) btn.addEventListener("click", initModel);
+    }
+    renderChatHistory();
+    closeSidebar();
+}
+
+function loadChat(chatId) {
+    saveCurrentChat();
+    const chats = loadAllChats();
+    const entry = chats.find(c => c.id === chatId);
+    if (!entry) return;
+    state.currentChatId = chatId;
+    state.messages = [];
+    rebuildSystemPrompt();
+    state.messages.push(...entry.messages);
+    chat.innerHTML = "";
+    hideWelcome();
+    for (const m of entry.messages) {
+        if (m.role === "user") addMessage("user", m.content);
+        else if (m.role === "assistant") addMessage("assistant", m.content || "");
+        else if (m.role === "tool") {
+            try { addToolCard(m.name, {}, JSON.parse(m.content || "{}")); }
+            catch { addToolCard(m.name, {}, { raw: m.content }); }
+        }
+    }
+    renderChatHistory();
+    closeSidebar();
+}
+
+function deleteChat(chatId) {
+    let chats = loadAllChats();
+    chats = chats.filter(c => c.id !== chatId);
+    saveAllChats(chats);
+    if (state.currentChatId === chatId) {
+        state.currentChatId = generateId();
+        state.messages = [];
+        rebuildSystemPrompt();
+        chat.innerHTML = "";
+    }
+    renderChatHistory();
+}
+
+function renderChatHistory() {
+    const chats = loadAllChats();
+    chatHistory.innerHTML = "";
+    if (chats.length === 0) {
+        chatHistory.innerHTML = `<div class="text-[11px] text-gray-600 text-center py-4">No chat history</div>`;
+        return;
+    }
+    for (const c of chats) {
+        const item = document.createElement("div");
+        item.className = `chat-item flex items-center gap-2 px-2.5 py-2 rounded-lg cursor-pointer border border-transparent text-xs ${c.id === state.currentChatId ? "active" : "hover:bg-gray-800/60"}`;
+        item.innerHTML = `
+            <div class="flex-1 min-w-0">
+                <div class="text-gray-200 truncate text-[12px]">${escHtml(c.title)}</div>
+                <div class="text-[10px] text-gray-600">${formatTime(c.updatedAt)}</div>
+            </div>
+            <button class="chat-delete flex-shrink-0 w-5 h-5 flex items-center justify-center rounded text-gray-600 hover:text-red-400 hover:bg-gray-800 transition" title="Delete">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+        `;
+        item.querySelector(".chat-delete").addEventListener("click", (e) => {
+            e.stopPropagation();
+            deleteChat(c.id);
+        });
+        item.addEventListener("click", () => loadChat(c.id));
+        chatHistory.appendChild(item);
+    }
+}
+
+function escHtml(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function formatTime(iso) {
+    try {
+        const d = new Date(iso);
+        const now = new Date();
+        if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+        return d.toLocaleDateString("en-GB", { month: "short", day: "numeric" });
+    } catch { return ""; }
+}
+
+function closeSidebar() {
+    sidebar.classList.remove("open");
+    sidebarOverlay.classList.remove("open");
+    sidebarOverlay.classList.add("hidden");
+}
+
+function openSidebar() {
+    sidebar.classList.add("open");
+    sidebarOverlay.classList.remove("hidden");
+    sidebarOverlay.classList.add("open");
+}
+
+// ─── UI Rendering ────────────────────────────────────────────────────────────
+function setStatus(text) {
+    statusText.textContent = text;
+}
+
+function appendLog(text, color = "text-gray-500") {
+    const ts = new Date().toLocaleTimeString("en-GB", { hour12: false });
+    const line = document.createElement("div");
+    line.className = color;
+    line.textContent = `[${ts}] ${text}`;
+    logContent.appendChild(line);
+    logContent.scrollTop = logContent.scrollHeight;
+}
+
+function showProgress(show) {
+    progressCtr.classList.toggle("hidden", !show);
+    if (!show) {
+        progressBar.style.width = "0%";
+        progressText.textContent = "0%";
+    }
+}
+
+function updateProgress(pct, file) {
+    progressBar.style.width = `${pct}%`;
+    progressText.textContent = `${pct}%`;
+    if (file) {
+        const shortName = file.split("/").pop();
+        setStatus(`Downloading ${shortName}...`);
+    }
+}
+
+function setInputEnabled(enabled) {
+    userInput.disabled = !enabled;
+    sendBtn.disabled = !enabled;
+    if (enabled) userInput.focus();
+}
+
+function scrollChat() {
+    chat.scrollTo({ top: chat.scrollHeight, behavior: "smooth" });
+}
+
+function hideWelcome() {
+    const w = document.getElementById("welcome");
+    if (w) w.style.display = "none";
+}
+
+function renderMarkdown(text) {
+    const esc = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+    // Collect fenced code blocks to protect them from inline transforms
+    const codeBlocks = [];
+    text = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+        codeBlocks.push(`<pre><code>${esc(code.trimEnd())}</code></pre>`);
+        return `\x00CB${codeBlocks.length - 1}\x00`;
+    });
+
+    const lines = text.split("\n");
+    let html = "";
+    let inList = null; // "ul" | "ol" | null
+
+    for (let i = 0; i < lines.length; i++) {
+        let line = lines[i];
+
+        // Code block placeholder
+        const cbMatch = line.match(/^\x00CB(\d+)\x00$/);
+        if (cbMatch) {
+            if (inList) { html += `</${inList}>`; inList = null; }
+            html += codeBlocks[+cbMatch[1]];
+            continue;
+        }
+
+        // Headings
+        const hMatch = line.match(/^(#{1,3})\s+(.+)$/);
+        if (hMatch) {
+            if (inList) { html += `</${inList}>`; inList = null; }
+            const level = hMatch[1].length;
+            html += `<h${level}>${inline(esc(hMatch[2]))}</h${level}>`;
+            continue;
+        }
+
+        // Horizontal rule
+        if (/^[-*_]{3,}\s*$/.test(line)) {
+            if (inList) { html += `</${inList}>`; inList = null; }
+            html += "<hr>";
+            continue;
+        }
+
+        // Unordered list
+        const ulMatch = line.match(/^[\s]*[-*+]\s+(.+)$/);
+        if (ulMatch) {
+            if (inList !== "ul") { if (inList) html += `</${inList}>`; html += "<ul>"; inList = "ul"; }
+            html += `<li>${inline(esc(ulMatch[1]))}</li>`;
+            continue;
+        }
+
+        // Ordered list
+        const olMatch = line.match(/^[\s]*\d+[.)]\s+(.+)$/);
+        if (olMatch) {
+            if (inList !== "ol") { if (inList) html += `</${inList}>`; html += "<ol>"; inList = "ol"; }
+            html += `<li>${inline(esc(olMatch[1]))}</li>`;
+            continue;
+        }
+
+        // Blockquote
+        const bqMatch = line.match(/^>\s?(.*)$/);
+        if (bqMatch) {
+            if (inList) { html += `</${inList}>`; inList = null; }
+            html += `<blockquote>${inline(esc(bqMatch[1]))}</blockquote>`;
+            continue;
+        }
+
+        // Close any open list for non-list lines
+        if (inList) { html += `</${inList}>`; inList = null; }
+
+        // Blank line
+        if (!line.trim()) continue;
+
+        // Paragraph
+        html += `<p>${inline(esc(line))}</p>`;
+    }
+    if (inList) html += `</${inList}>`;
+    return html;
+
+    function inline(s) {
+        return s
+            .replace(/`([^`]+)`/g, "<code>$1</code>")
+            .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+            .replace(/\*(.+?)\*/g, "<em>$1</em>")
+            .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    }
+}
+
+function addMessage(role, content) {
+    hideWelcome();
+    const wrapper = document.createElement("div");
+    wrapper.className = `flex animate-fade-in ${role === "user" ? "justify-end" : "justify-start"}`;
+
+    const bubble = document.createElement("div");
+    const isAssistant = role !== "user" && role !== "error" && role !== "system";
+    bubble.className = role === "user"
+        ? "max-w-[75%] bg-emerald-600/80 text-white rounded-2xl rounded-br-md px-4 py-2.5 text-sm leading-relaxed"
+        : role === "error"
+            ? "max-w-[75%] bg-red-900/40 text-red-300 border border-red-800/40 rounded-2xl rounded-bl-md px-4 py-2.5 text-sm leading-relaxed"
+            : role === "system"
+                ? "max-w-[75%] bg-gray-800/60 text-gray-400 rounded-2xl px-4 py-2 text-xs italic"
+                : "max-w-[75%] bg-gray-800/70 text-gray-200 rounded-2xl rounded-bl-md px-4 py-2.5 text-sm leading-relaxed";
+
+    if (isAssistant) {
+        bubble.classList.add("md-content");
+        bubble.innerHTML = renderMarkdown(content);
+    } else {
+        bubble.textContent = content;
+    }
+    wrapper.appendChild(bubble);
+    chat.appendChild(wrapper);
+    scrollChat();
+    return bubble;
+}
+
+function addThinkingIndicator() {
+    hideWelcome();
+    const wrapper = document.createElement("div");
+    wrapper.className = "flex justify-start animate-fade-in";
+    wrapper.id = "thinking";
+    const bubble = document.createElement("div");
+    bubble.className = "bg-gray-800/70 rounded-2xl rounded-bl-md px-4 py-3 flex gap-1.5 items-center";
+    for (let i = 0; i < 3; i++) {
+        const dot = document.createElement("span");
+        dot.className = "thinking-dot w-1.5 h-1.5 rounded-full bg-emerald-400";
+        bubble.appendChild(dot);
+    }
+    wrapper.appendChild(bubble);
+    chat.appendChild(wrapper);
+    scrollChat();
+    return wrapper;
+}
+
+function removeThinking() {
+    document.getElementById("thinking")?.remove();
+}
+
+function addToolCard(name, args, result) {
+    hideWelcome();
+    const card = document.createElement("div");
+    card.className = "animate-fade-in mx-auto max-w-[85%] bg-gray-800/50 border border-gray-700/40 rounded-xl px-4 py-2 text-xs cursor-pointer select-none";
+
+    const summary = document.createElement("div");
+    summary.className = "flex items-center gap-2 text-gray-500";
+    const ok = result.success !== false && !result.error;
+    const icon = ok ? "\u2713" : "\u2717";
+    const iconColor = ok ? "text-emerald-500" : "text-red-400";
+    summary.innerHTML = `<span class="${iconColor}">${icon}</span><span class="text-amber-400/70">${escHtml(name)}</span><span class="text-gray-600 text-[10px] ml-auto">\u25B6 expand</span>`;
+    card.appendChild(summary);
+
+    const details = document.createElement("div");
+    details.className = "hidden mt-2 pt-2 border-t border-gray-700/30 space-y-1";
+    const argsEl = document.createElement("div");
+    argsEl.className = "text-gray-400 font-mono break-all";
+    argsEl.textContent = `${name}(${JSON.stringify(args)})`;
+    const resultEl = document.createElement("div");
+    resultEl.className = ok ? "text-emerald-400/80 break-all" : "text-red-400/80 break-all";
+    resultEl.textContent = `${icon} ${JSON.stringify(result).slice(0, 300)}`;
+    details.append(argsEl, resultEl);
+    card.appendChild(details);
+
+    card.addEventListener("click", () => {
+        const isHidden = details.classList.toggle("hidden");
+        summary.querySelector(".text-gray-600").textContent = isHidden ? "\u25B6 expand" : "\u25BC collapse";
+    });
+
+    chat.appendChild(card);
+    scrollChat();
+}
+
+// ─── WebGPU Capability Detection ─────────────────────────────────────────────
+async function detectCapabilities() {
+    if (!navigator.gpu) {
+        return { device: "wasm", dtype: "q8", gpu: false, f16: false };
+    }
+    try {
+        const adapter = await navigator.gpu.requestAdapter();
+        if (!adapter) return { device: "wasm", dtype: "q8", gpu: false, f16: false };
+        const f16 = adapter.features.has("shader-f16");
+        return { device: "webgpu", dtype: f16 ? "q4f16" : "q4", gpu: true, f16 };
+    } catch {
+        return { device: "wasm", dtype: "q8", gpu: false, f16: false };
+    }
+}
+
+function updateGpuBadge(caps) {
+    gpuBadge.textContent = caps.gpu
+        ? `WebGPU${caps.f16 ? " \u00b7 f16" : ""}`
+        : "WASM (CPU)";
+    gpuBadge.className = caps.gpu
+        ? "text-[10px] font-medium px-2 py-0.5 rounded-full bg-emerald-900/40 text-emerald-400 uppercase tracking-wider"
+        : "text-[10px] font-medium px-2 py-0.5 rounded-full bg-amber-900/40 text-amber-400 uppercase tracking-wider";
+}
+
+// ─── Model Initialisation ────────────────────────────────────────────────────
+async function initModel() {
+    const modelKey = modelSelect.value;
+    const modelCfg = MODELS[modelKey];
+    if (!modelCfg) return;
+
+    initBtn.disabled = true;
+    initBtn.textContent = "Loading\u2026";
+    modelSelect.disabled = true;
+    setStatus("Detecting GPU capabilities\u2026");
+
+    state.capabilities = await detectCapabilities();
+    const caps = state.capabilities;
+
+    updateGpuBadge(caps);
+
+    const dtype = (modelCfg.needsF16 && caps.f16) ? modelCfg.preferredDtype : modelCfg.fallbackDtype;
+    const device = caps.device;
+
+    setStatus(`Loading ${modelCfg.name} (${dtype}) on ${device}\u2026`);
+    appendLog(`Initialising ${modelCfg.name} \u2014 device=${device}, dtype=${dtype}`, "text-emerald-400");
+    showProgress(true);
+    logPanel.classList.remove("hidden");
+    logToggle.innerHTML = "&#9650; Logs";
+
+    const fileProgress = {};
+
+    try {
+        state.generator = await pipeline("text-generation", modelCfg.id, {
+            device,
+            dtype,
+            progress_callback: (event) => {
+                const file = event.file ? event.file.split("/").pop() : (event.name ?? "");
+                const status = event.status;
+
+                if (status === "initiate") {
+                    appendLog(`Fetching ${file}\u2026`);
+                    setStatus(`Fetching ${file}\u2026`);
+                } else if (status === "download") {
+                    const mb = event.total ? ` (${(event.total / 1e6).toFixed(1)} MB)` : "";
+                    appendLog(`Downloading ${file}${mb}`);
+                    setStatus(`Downloading ${file}${mb}`);
+                } else if (status === "progress") {
+                    const pct = event.progress ?? 0;
+                    if (event.file) fileProgress[event.file] = pct;
+                    const values = Object.values(fileProgress);
+                    const avg = values.length
+                        ? Math.round(values.reduce((a, b) => a + b, 0) / values.length)
+                        : Math.round(pct);
+                    updateProgress(Math.min(avg, 99), file);
+                } else if (status === "done") {
+                    appendLog(`\u2713 ${file} done`, "text-emerald-500");
+                    if (event.file) fileProgress[event.file] = 100;
+                } else if (status === "ready") {
+                    appendLog("Pipeline ready", "text-emerald-400");
+                }
+                // Silently ignore noisy statuses (progress_total, etc.)
+            },
+        });
+
+        showProgress(false);
+        state.isReady = true;
+        setStatus(`${modelCfg.name} ready \u2014 ${device} / ${dtype}`);
+        appendLog(`Model loaded successfully`, "text-emerald-400");
+        setInputEnabled(true);
+        initBtn.style.display = "none";
+    } catch (err) {
+        showProgress(false);
+        setStatus(`Failed: ${err.message}`);
+        appendLog(`ERROR: ${err.message}`, "text-red-400");
+        initBtn.disabled = false;
+        initBtn.textContent = "Retry";
+        modelSelect.disabled = false;
+    }
+}
+
+// ─── Tool Call Parsing (fallback for models that return raw text) ─────────────
+const KNOWN_TOOLS = new Set([
+    "getCurrentTime", "changeBackgroundColor", "readPageContent", "querySelector",
+    "createNote", "runJavaScript", "fetchURL", "scrollPage", "useSkill", "listSkills",
+    "runScript", "listScripts",
+]);
+
+function stripToolCallArtifacts(text) {
+    if (!text) return text;
+    let cleaned = text;
+    // Remove <tool_call>...</tool_call> blocks
+    cleaned = cleaned.replace(/<tool_call>\s*[\s\S]*?\s*<\/tool_call>/g, "");
+    // Remove bare JSON tool invocations: {"name":"functionName","arguments":{...}}
+    cleaned = cleaned.replace(/\{\s*"?name"?\s*:\s*"?\w+"?\s*,\s*"?arguments"?\s*:\s*\{[\s\S]*?\}\s*\}/g, "");
+    // Remove functionName({...}) patterns for known tools
+    for (const toolName of KNOWN_TOOLS) {
+        const re = new RegExp(`\\b${toolName}\\s*\\(\\s*\\{[\\s\\S]*?\\}\\s*\\)`, "g");
+        cleaned = cleaned.replace(re, "");
+    }
+    // Remove call:functionName{...} patterns
+    cleaned = cleaned.replace(/call\s*:\s*\w+\s*\{[\s\S]*?\}/g, "");
+    // Collapse multiple blank lines left behind
+    cleaned = cleaned.replace(/\n{3,}/g, "\n\n").trim();
+    return cleaned;
+}
+
+function tryParseLooseJson(str) {
+    try { return JSON.parse(str); } catch { /* continue */ }
+    try {
+        const fixed = str
+            .replace(/'/g, '"')
+            .replace(/([\{,]\s*)(\w[\w-]*)\s*:/g, '$1"$2":')
+            .replace(/:\s*([^\s"\d\[\{}\],][^,\}\]]*?)(\s*[,\}])/g, (_, val, end) => {
+                const v = val.trim();
+                if (v === "true" || v === "false" || v === "null") return `: ${v}${end}`;
+                return `: "${v}"${end}`;
+            });
+        return JSON.parse(fixed);
+    } catch { /* continue */ }
+    return null;
+}
+
+function parseToolCallsFromText(text) {
+    const calls = [];
+    const makeTc = (name, args) => ({
+        id: `call_${Date.now()}_${calls.length}`,
+        type: "function",
+        function: { name, arguments: JSON.stringify(args) },
+    });
+    const tryPush = (name, raw) => {
+        const args = tryParseLooseJson(raw);
+        if (args) { calls.push(makeTc(name, args)); return true; }
+        return false;
+    };
+
+    // Pattern 1: <tool_call>{"name":...,"arguments":...}</tool_call>
+    const xmlRe = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g;
+    let m;
+    while ((m = xmlRe.exec(text)) !== null) {
+        const obj = tryParseLooseJson(m[1]);
+        if (obj?.name) calls.push(makeTc(obj.name, obj.arguments ?? {}));
+    }
+    if (calls.length > 0) return calls;
+
+    // Pattern 2: bare JSON {"name":"functionName","arguments":{...}}
+    const jsonRe = /\{\s*"?name"?\s*:\s*"?(\w+)"?\s*,\s*"?arguments"?\s*:\s*(\{[\s\S]*?\})\s*\}/g;
+    while ((m = jsonRe.exec(text)) !== null) {
+        if (KNOWN_TOOLS.has(m[1])) tryPush(m[1], m[2]);
+    }
+    if (calls.length > 0) return calls;
+
+    // Pattern 3: functionName({"key":"value",...}) or functionName({key:value})
+    const funcRe = /\b(\w+)\s*\(\s*(\{[\s\S]*?\})\s*\)/g;
+    while ((m = funcRe.exec(text)) !== null) {
+        if (KNOWN_TOOLS.has(m[1])) tryPush(m[1], m[2]);
+    }
+    if (calls.length > 0) return calls;
+
+    // Pattern 4: call:functionName{key:value} or call:functionName{"key":"value"}
+    const callRe = /call\s*:\s*(\w+)\s*(\{[\s\S]*?\})/g;
+    while ((m = callRe.exec(text)) !== null) {
+        if (KNOWN_TOOLS.has(m[1])) tryPush(m[1], m[2]);
+    }
+    if (calls.length > 0) return calls;
+
+    // Pattern 5: last resort — scan for a known tool name followed by any JSON-like arg
+    for (const toolName of KNOWN_TOOLS) {
+        const idx = text.indexOf(toolName);
+        if (idx === -1) continue;
+        const after = text.slice(idx + toolName.length);
+        const braceMatch = after.match(/\s*[\(:]?\s*(\{[\s\S]*?\})/);
+        if (braceMatch && tryPush(toolName, braceMatch[1])) return calls;
+    }
+
+    return calls;
+}
+
+// ─── Execute a Single Tool Call ──────────────────────────────────────────────
+async function executeTool(call) {
+    const name = call.function.name;
+    const rawArgs = call.function.arguments;
+    const args = typeof rawArgs === "string" ? JSON.parse(rawArgs) : (rawArgs ?? {});
+
+    if (!TOOLS_IMPL[name]) return { error: `Unknown tool: ${name}` };
+    return await Promise.resolve(TOOLS_IMPL[name](args));
+}
+
+
+function getSkillInstructions(skill) {
+    let body = skill.body;
+    const maxLen = state.settings.skillLimit;
+    if (body.length > maxLen) {
+        const outputIdx = body.search(/^## Output/m);
+        if (outputIdx > 0 && outputIdx < maxLen) {
+            const workflow = body.slice(0, outputIdx);
+            const output = body.slice(outputIdx);
+            body = workflow + output.slice(0, maxLen - workflow.length) + "\n[truncated]";
+        } else {
+            body = body.slice(0, maxLen) + "\n[truncated]";
+        }
+    }
+    return body;
+}
+
+// ─── Context Window Management ───────────────────────────────────────────────
+function trimMessages(messages) {
+    const maxCtx = state.settings.maxContext;
+    const toolLimit = state.settings.toolLimit;
+    const total = JSON.stringify(messages).length;
+    if (total <= maxCtx) return messages;
+
+    const system = messages[0]?.role === "system" ? [messages[0]] : [];
+    let rest = messages.slice(system.length);
+
+    // Truncate overly long tool results
+    rest = rest.map(m => {
+        if (m.role === "tool" && m.content && m.content.length > toolLimit) {
+            return { ...m, content: m.content.slice(0, toolLimit) + "\n[truncated]" };
+        }
+        if (m.role === "user" && m.content && m.content.startsWith("[Tool result") && m.content.length > toolLimit) {
+            return { ...m, content: m.content.slice(0, toolLimit) + "\n[truncated]" };
+        }
+        return m;
+    });
+
+    // Drop oldest messages until under budget (keep at least the last 4)
+    while (JSON.stringify([...system, ...rest]).length > maxCtx && rest.length > 4) {
+        rest = rest.slice(1);
+    }
+    if (rest.length < messages.slice(system.length).length) {
+        appendLog(`Pruned context to fit model window`, "text-amber-400");
+    }
+    return [...system, ...rest];
+}
+
+// ─── Agent Loop ──────────────────────────────────────────────────────────────
+async function runAgent(userMessage) {
+    if (!state.isReady || state.isGenerating) return;
+    state.isGenerating = true;
+    state.aborted = false;
+    setInputEnabled(false);
+    stopBtn.classList.remove("hidden");
+    sendBtn.classList.add("hidden");
+
+    if (state.messages.length === 0 || state.messages[0]?.role !== "system") {
+        rebuildSystemPrompt();
+    }
+
+    state.messages.push({ role: "user", content: userMessage });
+    addMessage("user", userMessage);
+
+    const maxIter = state.settings.maxIterations;
+    let iterations = 0;
+
+    while (iterations < maxIter) {
+        if (state.aborted) {
+            appendLog("Generation aborted by user", "text-amber-400");
+            addMessage("system", "Generation stopped.");
+            break;
+        }
+        iterations++;
+        state.messages = trimMessages(state.messages);
+        const ctxLen = JSON.stringify(state.messages).length;
+        appendLog(`Step ${iterations}/${maxIter} \u2014 context ~${ctxLen} chars, ${state.messages.length} msgs`, "text-cyan-400");
+        setStatus(`Thinking\u2026 (step ${iterations}/${maxIter})`);
+        const indicator = addThinkingIndicator();
+
+        try {
+            const genOpts = {
+                max_new_tokens: state.settings.maxTokens,
+                do_sample: state.settings.temperature > 0,
+                tools: TOOLS_SCHEMA,
+            };
+            if (state.settings.temperature > 0) {
+                genOpts.temperature = state.settings.temperature;
+            }
+
+            appendLog("Generating\u2026", "text-gray-400");
+            const t0 = performance.now();
+
+            // Stream tokens into a live bubble
+            let streamedText = "";
+            let streamBubble = null;
+            let streamWrapper = null;
+
+            const streamer = new TextStreamer(state.generator.tokenizer, {
+                skip_prompt: true,
+                skip_special_tokens: true,
+                callback_function: (token) => {
+                    if (state.aborted) return;
+                    if (!token) return;
+                    streamedText += token;
+                    if (!streamBubble) {
+                        removeThinking();
+                        hideWelcome();
+                        streamWrapper = document.createElement("div");
+                        streamWrapper.className = "flex justify-start animate-fade-in";
+                        streamBubble = document.createElement("div");
+                        streamBubble.className = "max-w-[75%] bg-gray-800/70 text-gray-200 rounded-2xl rounded-bl-md px-4 py-2.5 text-sm leading-relaxed md-content";
+                        streamWrapper.appendChild(streamBubble);
+                        chat.appendChild(streamWrapper);
+                    }
+                    streamBubble.innerHTML = renderMarkdown(streamedText);
+                    scrollChat();
+                },
+            });
+
+            genOpts.streamer = streamer;
+            const output = await state.generator(state.messages, genOpts);
+            const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+            appendLog(`Generated in ${elapsed}s`, "text-gray-400");
+            if (!streamBubble) removeThinking();
+
+            const generated = output[0].generated_text;
+            const lastMsg = generated[generated.length - 1];
+            const contentPreview = (lastMsg.content ?? "").slice(0, 120);
+            appendLog(`Role: ${lastMsg.role}, content: ${contentPreview || "(empty)"}${lastMsg.tool_calls ? ", tool_calls: " + lastMsg.tool_calls.length : ""}`, "text-gray-500");
+
+            // Check for tool calls — native (pipeline-parsed) or text fallback
+            const nativeToolCalls = lastMsg.tool_calls ?? [];
+            let toolCalls = nativeToolCalls;
+            let isNative = nativeToolCalls.length > 0;
+            if (!isNative && typeof lastMsg.content === "string") {
+                toolCalls = parseToolCallsFromText(lastMsg.content);
+            }
+
+            if (toolCalls.length > 0) {
+                // Remove the streamed bubble since this was a tool call, not a final response
+                if (streamWrapper) streamWrapper.remove();
+
+                appendLog(`Tool calls (${isNative ? "native" : "text-parsed"}): ${toolCalls.map(c => c.function.name).join(", ")}`, "text-amber-400");
+
+                // Execute all tool calls
+                const results = [];
+                for (const call of toolCalls) {
+                    const name = call.function.name;
+                    const rawArgs = call.function.arguments;
+                    const args = typeof rawArgs === "string" ? JSON.parse(rawArgs) : (rawArgs ?? {});
+                    const result = await executeTool(call);
+                    appendLog(`\u2192 ${name}(${JSON.stringify(args).slice(0, 80)}) \u2192 ${JSON.stringify(result).slice(0, 80)}`, "text-amber-300");
+                    addToolCard(name, args, result);
+                    results.push({ call, name, args, result });
+                }
+
+                if (isNative) {
+                    // Native tool calls — use standard role:"tool" format
+                    state.messages.push({
+                        role: "assistant",
+                        content: lastMsg.content || null,
+                        tool_calls: toolCalls,
+                    });
+                    for (const { call, name, result } of results) {
+                        state.messages.push({
+                            role: "tool",
+                            name,
+                            content: JSON.stringify(result),
+                            tool_call_id: call.id ?? `call_${iterations}`,
+                        });
+                    }
+                } else {
+                    // Text-parsed tool calls — model didn't use the native format,
+                    // so role:"tool" messages will confuse it. Instead, inject
+                    // results as a user message in conversational style.
+                    state.messages.push({
+                        role: "assistant",
+                        content: lastMsg.content || "",
+                    });
+                    const parts = results.map(({ name, args, result }) => {
+                        const resultStr = typeof result === "string" ? result : JSON.stringify(result, null, 2);
+                        return `[Tool result for ${name}(${JSON.stringify(args)})]\n${resultStr}`;
+                    });
+                    state.messages.push({
+                        role: "user",
+                        content: parts.join("\n\n") + "\n\nUsing the information above, answer the original question thoroughly.",
+                    });
+                }
+                continue;
+            }
+
+            // Empty response — retry once without tools to force text output
+            if (!lastMsg.content || !lastMsg.content.trim()) {
+                if (streamWrapper) streamWrapper.remove();
+                if (iterations < maxIter) {
+                    appendLog("Empty response, retrying in text-only mode\u2026", "text-amber-400");
+                    iterations++;
+                    setStatus(`Thinking\u2026 (step ${iterations}/${maxIter}, text mode)`);
+                    const retryIndicator = addThinkingIndicator();
+                    const retryOpts = {
+                        max_new_tokens: state.settings.maxTokens,
+                        do_sample: false,
+                    };
+
+                    let retryStreamed = "";
+                    let retryBubble = null;
+                    const retryStreamer = new TextStreamer(state.generator.tokenizer, {
+                        skip_prompt: true,
+                        skip_special_tokens: true,
+                        callback_function: (token) => {
+                            if (state.aborted) return;
+                            if (!token) return;
+                            retryStreamed += token;
+                            if (!retryBubble) {
+                                removeThinking();
+                                retryBubble = addMessage("assistant", "");
+                            }
+                            retryBubble.innerHTML = renderMarkdown(retryStreamed);
+                            scrollChat();
+                        },
+                    });
+                    retryOpts.streamer = retryStreamer;
+
+                    const t1 = performance.now();
+                    const retryOutput = await state.generator(state.messages, retryOpts);
+                    appendLog(`Retry generated in ${((performance.now() - t1) / 1000).toFixed(1)}s`, "text-gray-400");
+                    if (!retryBubble) removeThinking();
+                    const retryMsg = retryOutput[0].generated_text;
+                    const retryLast = retryMsg[retryMsg.length - 1];
+                    const retryText = (retryLast.content && retryLast.content.trim()) || "(empty response)";
+                    const cleanedRetry = stripToolCallArtifacts(retryText) || retryText;
+                    if (retryBubble) {
+                        retryBubble.innerHTML = renderMarkdown(cleanedRetry);
+                    } else {
+                        addMessage("assistant", cleanedRetry);
+                    }
+                    state.messages.push({ role: "assistant", content: cleanedRetry });
+                    break;
+                }
+            }
+
+            // Plain text response — finalize streamed bubble
+            const rawText = (lastMsg.content && lastMsg.content.trim()) || "(empty response)";
+            const text = stripToolCallArtifacts(rawText) || rawText;
+            if (streamBubble) {
+                streamBubble.innerHTML = renderMarkdown(text);
+            } else {
+                addMessage("assistant", text);
+            }
+            state.messages.push({ role: "assistant", content: text });
+            break;
+
+        } catch (err) {
+            removeThinking();
+            appendLog(`ERROR: ${err.message}`, "text-red-400");
+            addMessage("error", `Generation error: ${err.message}`);
+            break;
+        }
+    }
+
+    if (iterations >= maxIter) {
+        addMessage("system", `Reached the ${maxIter}-iteration safety limit.`);
+    }
+
+    state.isGenerating = false;
+    state.aborted = false;
+    stopBtn.classList.add("hidden");
+    sendBtn.classList.remove("hidden");
+    setInputEnabled(true);
+    setStatus(state.isReady ? "Ready" : "Not initialised");
+    saveCurrentChat();
+}
+
+// ─── Event Handlers ──────────────────────────────────────────────────────────
+initBtn.addEventListener("click", initModel);
+
+inputForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const text = userInput.value.trim();
+    if (!text) return;
+    userInput.value = "";
+    runAgent(text);
+});
+
+stopBtn.addEventListener("click", () => {
+    state.aborted = true;
+    removeThinking();
+});
+
+// Log panel toggle
+logToggle.addEventListener("click", () => {
+    const hidden = logPanel.classList.toggle("hidden");
+    logToggle.innerHTML = hidden ? "&#9660; Logs" : "&#9650; Logs";
+});
+
+// Settings panel
+settingsBtn.addEventListener("click", () => {
+    settingsPanel.classList.remove("hidden");
+    settingsBack.classList.remove("hidden");
+});
+function closeSettingsPanel() {
+    settingsPanel.classList.add("hidden");
+    settingsBack.classList.add("hidden");
+}
+closeSettings.addEventListener("click", closeSettingsPanel);
+settingsBack.addEventListener("click", closeSettingsPanel);
+
+// Skills panel
+skillsBtn.addEventListener("click", () => {
+    skillsPanel.classList.remove("hidden");
+    skillsBack.classList.remove("hidden");
+    renderSkillsList();
+});
+function closeSkillsPanel() {
+    skillsPanel.classList.add("hidden");
+    skillsBack.classList.add("hidden");
+}
+closeSkills.addEventListener("click", closeSkillsPanel);
+skillsBack.addEventListener("click", closeSkillsPanel);
+
+// Fetch skill from URL
+$("#fetch-skill-btn").addEventListener("click", () => {
+    const url = $("#skill-url").value.trim();
+    if (url) fetchSkillsFromUrl(url);
+});
+
+// Upload SKILL.md file
+$("#skill-file-input").addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+        registerSkill(reader.result, { source: "uploaded" });
+        e.target.value = "";
+    };
+    reader.readAsText(file);
+});
+
+// Paste skill
+$("#paste-skill-btn").addEventListener("click", () => {
+    const text = $("#skill-paste").value.trim();
+    if (!text) return;
+    registerSkill(text, { source: "manual" });
+    $("#skill-paste").value = "";
+});
+
+// Settings sliders
+$("#max-tokens").addEventListener("input", (e) => {
+    state.settings.maxTokens = +e.target.value;
+    $("#max-tokens-val").textContent = e.target.value;
+});
+$("#max-iter").addEventListener("input", (e) => {
+    state.settings.maxIterations = +e.target.value;
+    $("#max-iter-val").textContent = e.target.value;
+});
+$("#temperature").addEventListener("input", (e) => {
+    state.settings.temperature = +e.target.value;
+    $("#temp-val").textContent = (+e.target.value).toFixed(1);
+});
+$("#max-ctx").addEventListener("input", (e) => {
+    state.settings.maxContext = +e.target.value;
+    $("#max-ctx-val").textContent = e.target.value;
+});
+$("#tool-limit").addEventListener("input", (e) => {
+    state.settings.toolLimit = +e.target.value;
+    $("#tool-limit-val").textContent = e.target.value;
+});
+$("#skill-limit").addEventListener("input", (e) => {
+    state.settings.skillLimit = +e.target.value;
+    $("#skill-limit-val").textContent = e.target.value;
+});
+$("#fetch-limit").addEventListener("input", (e) => {
+    state.settings.fetchLimit = +e.target.value;
+    $("#fetch-limit-val").textContent = e.target.value;
+});
+
+// Clear conversation
+$("#clear-chat").addEventListener("click", () => {
+    saveCurrentChat();
+    state.currentChatId = generateId();
+    state.messages = [];
+    rebuildSystemPrompt();
+    chat.innerHTML = "";
+    closeSettingsPanel();
+    setStatus("Conversation cleared");
+    renderChatHistory();
+});
+
+// Sidebar
+newChatBtn.addEventListener("click", startNewChat);
+hamburgerBtn.addEventListener("click", () => {
+    if (sidebar.classList.contains("open")) closeSidebar();
+    else openSidebar();
+});
+sidebarOverlay.addEventListener("click", closeSidebar);
+
+// Model switch (requires re-init)
+modelSelect.addEventListener("change", () => {
+    if (state.isReady) {
+        state.generator = null;
+        state.isReady = false;
+        state.messages = [];
+        rebuildSystemPrompt();
+        chat.innerHTML = "";
+        setInputEnabled(false);
+
+        const w = document.createElement("div");
+        w.id = "welcome";
+        w.className = "text-center py-16 select-none";
+        w.innerHTML = `
+            <div class="text-5xl mb-5">&#9889;</div>
+            <h2 class="text-xl font-semibold text-gray-200 mb-2">Model Changed</h2>
+            <p class="text-gray-500 text-sm max-w-md mx-auto leading-relaxed mb-8">
+                Click below to load <strong>${MODELS[modelSelect.value]?.name ?? "the model"}</strong>.
+            </p>
+            <button id="init-btn" class="bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-semibold px-8 py-2.5 rounded-lg transition shadow-lg shadow-emerald-900/30">
+                Initialize Agent
+            </button>
+        `;
+        chat.appendChild(w);
+        w.querySelector("#init-btn").addEventListener("click", initModel);
+        setStatus("Select a model and click Initialize");
+    }
+});
+
+// ─── Bootstrap ───────────────────────────────────────────────────────────────
+(async () => {
+    const caps = await detectCapabilities();
+    updateGpuBadge(caps);
+
+    BUNDLED_SKILLS.forEach(md => registerSkill(md, { builtin: true }));
+    state.currentChatId = generateId();
+    renderChatHistory();
+})();
+</script>
+</body>
+</html>
